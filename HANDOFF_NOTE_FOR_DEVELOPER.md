@@ -105,18 +105,25 @@ INFO | __main__:setup_qt_application:55 - Qt attributes set - High DPI scaling, 
 
 ## 🎯 MOST LIKELY ROOT CAUSE
 
-**Blocking imports or heavy initialization in one of Kate's UI components:**
+## 🎯 REVISED ROOT CAUSE ANALYSIS (CRITICAL UPDATE)
+
+**Qt Transparency/Compositing Issue - NOT Blocking Initialization**
+
+**New Evidence**: Qt rendering a "cutout of what's behind it" indicates a transparency or compositing problem, not hanging/blocking.
+
+**Most Likely Causes:**
+
+1. **Improper Window Flags/Attributes** - Qt window settings (e.g., `Qt.FramelessWindowHint`, `Qt.WA_TranslucentBackground`) enabling transparency unintentionally
+2. **Widget Transparency Issues** - Widgets with transparent backgrounds exposing underlying desktop
+3. **Graphics Backend Bug** - Qt rendering pipeline (OpenGL/software) causing incorrect compositing
+4. **Style Sheet Misconfiguration** - QSS styles setting opacity or background properties incorrectly
+
+**Components to Investigate:**
 
 - `app/ui/components/conversation_sidebar.py`
 - `app/ui/components/chat_area.py`
 - `app/ui/components/assistant_panel.py`
-
-**Evidence**:
-
-- Basic Qt widgets work perfectly
-- Kate's Qt setup completes successfully
-- Hang occurs during complex UI component creation
-- Screenshot content suggests Qt creates window but widgets don't paint due to blocked main thread
+- Theme system in `app/themes/` directory
 
 ---
 
