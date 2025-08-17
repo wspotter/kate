@@ -5,31 +5,55 @@ Provides comprehensive document upload, organization, and metadata viewing
 capabilities for the RAG system.
 """
 
-import os
 import asyncio
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable
+import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QFrame,
-    QLabel, QPushButton, QLineEdit, QTextEdit, QTreeWidget, 
-    QTreeWidgetItem, QListWidget, QListWidgetItem, QGroupBox,
-    QProgressBar, QTabWidget, QFormLayout, QComboBox,
-    QFileDialog, QMessageBox, QScrollArea, QDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu,
-    QToolButton, QSpacerItem, QSizePolicy
-)
-from PySide6.QtCore import Qt, Signal, QThread, pyqtSignal, QTimer, QSize
-from PySide6.QtGui import QIcon, QFont, QPixmap, QAction, QDragEnterEvent, QDropEvent
 from loguru import logger
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QFont, QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpacerItem,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...core.events import EventBus
 from ...database.manager import DatabaseManager
 from ...database.models import Document, DocumentChunk
 from ...services.document_processor import DocumentProcessor
-from ...services.embedding_service import EmbeddingService
+
+# Lazy import to avoid hanging during startup
+# from ...services.embedding_service import EmbeddingService
 
 
 @dataclass
@@ -49,8 +73,8 @@ class DocumentInfo:
 class DocumentUploadThread(QThread):
     """Thread for background document processing."""
     
-    progress_updated = pyqtSignal(int, str)  # progress, status
-    document_processed = pyqtSignal(str, bool, str)  # document_id, success, message
+    progress_updated = Signal(int, str)  # progress, status
+    document_processed = Signal(str, bool, str)  # document_id, success, message
     
     def __init__(self, file_paths: List[str], document_processor: DocumentProcessor):
         super().__init__()

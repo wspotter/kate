@@ -8,14 +8,22 @@ for semantic search and RAG functionality.
 import asyncio
 import hashlib
 import pickle
-from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple, Union
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from loguru import logger
+
+# Make sentence_transformers import optional to avoid startup hanging
+try:
+    from sentence_transformers import SentenceTransformer
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    logger.warning("sentence_transformers not available - embedding service will use mock implementation")
+    SentenceTransformer = None
+    HAS_SENTENCE_TRANSFORMERS = False
 
 from ..core.events import EventBus
 from ..database.manager import DatabaseManager
@@ -83,7 +91,7 @@ class EmbeddingService:
     }
     
     def __init__(
-        self, 
+        self,
         database_manager: DatabaseManager,
         event_bus: EventBus,
         model_name: str = "all-MiniLM-L6-v2",
@@ -112,10 +120,19 @@ class EmbeddingService:
         # Logger
         self.logger = logger.bind(component="EmbeddingService")
         
+        # Check if sentence transformers is available
+        if not HAS_SENTENCE_TRANSFORMERS:
+            self.logger.warning("sentence_transformers not available - using mock embedding service")
+        
     async def initialize(self) -> None:
         """Initialize the embedding service and load the model."""
         try:
             self.logger.info(f"Initializing embedding service with model: {self.model_name}")
+            
+            if not HAS_SENTENCE_TRANSFORMERS:
+                self.logger.warning("sentence_transformers not available - skipping model loading")
+                return
+                
             await self._load_model()
             self.logger.info("Embedding service initialized successfully")
             
@@ -140,12 +157,16 @@ class EmbeddingService:
             
     async def _load_model(self) -> None:
         """Load the sentence transformer model."""
+        if not HAS_SENTENCE_TRANSFORMERS:
+            self.logger.warning("sentence_transformers not available - cannot load model")
+            return
+            
         async with self._model_lock:
             if self.model is None:
                 # Load model in thread pool to avoid blocking
                 loop = asyncio.get_event_loop()
                 self.model = await loop.run_in_executor(
-                    None, 
+                    None,
                     self._load_model_sync
                 )
                 
@@ -215,21 +236,40 @@ class EmbeddingService:
             # Generate embeddings for uncached texts
             new_results = []
             if uncached_texts:
-                await self._load_model()
-                
-                # Process in batches
-                batch_size = self.config.batch_size
-                for i in range(0, len(uncached_texts), batch_size):
-                    batch_texts = uncached_texts[i:i + batch_size]
-                    batch_indices = uncached_indices[i:i + batch_size]
+                if not HAS_SENTENCE_TRANSFORMERS:
+                    # Use mock embeddings
+                    for j, text in enumerate(uncached_texts):
+                        original_index = uncached_indices[j]
+                        mock_embedding = np.random.random(384).astype(np.float32)  # MiniLM dimension
+                        
+                        result = EmbeddingResult(
+                            text=text,
+                            embedding=mock_embedding,
+                            model_name=self.model_name,
+                            processing_time_ms=1  # Mock processing time
+                        )
+                        
+                        new_results.append((original_index, result))
+                        
+                        # Cache the mock embedding
+                        cache_key = self._get_cache_key(text)
+                        self._cache_embedding(cache_key, mock_embedding)
+                else:
+                    await self._load_model()
                     
-                    # Generate embeddings in thread pool
-                    loop = asyncio.get_event_loop()
-                    embeddings = await loop.run_in_executor(
-                        None,
-                        self._encode_batch,
-                        batch_texts
-                    )
+                    # Process in batches
+                    batch_size = self.config.batch_size
+                    for i in range(0, len(uncached_texts), batch_size):
+                        batch_texts = uncached_texts[i:i + batch_size]
+                        batch_indices = uncached_indices[i:i + batch_size]
+                        
+                        # Generate embeddings in thread pool
+                        loop = asyncio.get_event_loop()
+                        embeddings = await loop.run_in_executor(
+                            None,
+                            self._encode_batch,
+                            batch_texts
+                        )
                     
                     # Create results and cache
                     for j, (text, embedding) in enumerate(zip(batch_texts, embeddings)):

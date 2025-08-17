@@ -20,8 +20,6 @@ from PySide6.QtWidgets import (
 
 from ..core.config import AppSettings
 from ..core.events import EventBus
-from ..services.embedding_service import EmbeddingService
-from ..services.rag_evaluation_service import RAGEvaluationService
 from .components.assistant_panel import AssistantPanel
 from .components.chat_area import ChatArea
 from .components.conversation_sidebar import ConversationSidebar
@@ -67,12 +65,18 @@ class MainWindow(QMainWindow):
         
         self.logger.info("Main window initialized with 3-column layout and evaluation integration")
         
+        # Add a timer to check widget visibility after a short delay
+        QTimer.singleShot(1000, self._verify_widget_display)
+        
     def _setup_ui(self) -> None:
         """Set up the main window UI."""
+        self.logger.info("Setting up main window UI...")
+        
         # Window properties
         self.setWindowTitle("Kate - LLM Desktop Client")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
+        self.logger.info("Window properties set - title, minimum size, and resize")
         
         # Set window icon
         # self.setWindowIcon(QIcon(":/icons/kate.png"))  # TODO: Add icon
@@ -80,45 +84,60 @@ class MainWindow(QMainWindow):
         # Create central widget
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
+        self.logger.info("Central widget created and set")
         
         # Create main layout
         self.main_layout = QHBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
+        self.logger.info("Main horizontal layout created with zero margins and spacing")
         
     def _setup_layout(self) -> None:
         """Set up the 3-column layout."""
+        self.logger.info("Setting up 3-column layout...")
+        
         # Create main splitter for 3 columns
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
+        self.logger.info("Main horizontal splitter created")
         
         # Left panel - Conversation sidebar
+        self.logger.info("Creating conversation sidebar...")
         self.conversation_sidebar = ConversationSidebar(self.event_bus)
         self.conversation_sidebar.setMinimumWidth(250)
         self.conversation_sidebar.setMaximumWidth(400)
+        self.logger.info("Conversation sidebar created with width constraints")
         
         # Center panel - Chat area
+        self.logger.info("Creating chat area...")
         self.chat_area = ChatArea(self.event_bus)
+        self.logger.info("Chat area created successfully")
         
         # Right panel - Assistant panel
+        self.logger.info("Creating assistant panel...")
         self.assistant_panel = AssistantPanel(self.event_bus)
         self.assistant_panel.setMinimumWidth(280)
         self.assistant_panel.setMaximumWidth(350)
+        self.logger.info("Assistant panel created with width constraints")
         
         # Add panels to splitter
         self.main_splitter.addWidget(self.conversation_sidebar)
         self.main_splitter.addWidget(self.chat_area)
         self.main_splitter.addWidget(self.assistant_panel)
+        self.logger.info("All three panels added to splitter")
         
         # Set splitter proportions (25% | 50% | 25%)
         self.main_splitter.setSizes([300, 700, 300])
+        self.logger.info("Splitter proportions set to 300:700:300")
         
         # Add splitter to main layout
         self.main_layout.addWidget(self.main_splitter)
+        self.logger.info("Splitter added to main layout")
         
         # Create status bar
         self.status_bar = StatusBar()
         self.setStatusBar(self.status_bar)
+        self.logger.info("Status bar created and set")
         
     def _connect_signals(self) -> None:
         """Connect UI signals."""
@@ -204,9 +223,16 @@ class MainWindow(QMainWindow):
     def _setup_evaluation_service(self) -> None:
         """Set up the evaluation service and connect it to components."""
         try:
+            # Lazy import to avoid hanging during startup
+            from ..services.embedding_service import EmbeddingService
+            from ..services.rag_evaluation_service import RAGEvaluationService
+            
             # Create a minimal embedding service for evaluation
             # In a full implementation, this would be injected from the application
-            embedding_service = EmbeddingService()
+            embedding_service = EmbeddingService(
+                database_manager=None,  # Will be provided later
+                event_bus=self.event_bus
+            )
             
             # Create evaluation service
             self.evaluation_service = RAGEvaluationService(embedding_service)
@@ -354,7 +380,7 @@ class MainWindow(QMainWindow):
         """Get the assistant panel component."""
         return self.assistant_panel
         
-    def get_evaluation_service(self) -> RAGEvaluationService:
+    def get_evaluation_service(self):
         """Get the evaluation service."""
         return self.evaluation_service
         
@@ -372,3 +398,25 @@ class MainWindow(QMainWindow):
         if self.evaluation_dashboard:
             self.evaluation_dashboard.close()
         self.logger.info("Evaluation resources cleaned up")
+        
+    def _verify_widget_display(self) -> None:
+        """Verify that widgets are properly displayed and not showing screenshots."""
+        self.logger.info("=== WIDGET DISPLAY VERIFICATION ===")
+        self.logger.info(f"Main window visible: {self.isVisible()}")
+        self.logger.info(f"Main window size: {self.size().width()}x{self.size().height()}")
+        self.logger.info(f"Central widget visible: {self.central_widget.isVisible()}")
+        self.logger.info(f"Main splitter visible: {self.main_splitter.isVisible()}")
+        self.logger.info(f"Conversation sidebar visible: {self.conversation_sidebar.isVisible()}")
+        self.logger.info(f"Chat area visible: {self.chat_area.isVisible()}")
+        self.logger.info(f"Assistant panel visible: {self.assistant_panel.isVisible()}")
+        
+        # Check if any widgets have screenshot-like content
+        self.logger.info("=== CHECKING FOR SCREENSHOT CONTENT ===")
+        if hasattr(self.chat_area, 'children'):
+            child_count = len(self.chat_area.children())
+            self.logger.info(f"Chat area has {child_count} child widgets")
+        
+        # Force a repaint to ensure proper rendering
+        self.repaint()
+        self.update()
+        self.logger.info("Forced window repaint and update")

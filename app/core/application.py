@@ -3,20 +3,23 @@ Core Kate application framework with PySide6 integration.
 """
 import asyncio
 import sys
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QTimer, QObject, Signal
 from loguru import logger
+from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtWidgets import QApplication
 
-from .config import AppSettings, get_settings
-from .events import EventBus, ApplicationStartedEvent, ApplicationShutdownEvent
 from ..database.manager import DatabaseManager
-from ..ui.main_window import MainWindow
-from ..themes.manager import ThemeManager, initialize_theme_manager, cleanup_theme_manager
-from ..services.search_service import SearchService
 from ..services.update_manager import UpdateManager
+from ..themes.manager import (
+    ThemeManager,
+    cleanup_theme_manager,
+    initialize_theme_manager,
+)
+from ..ui.main_window import MainWindow
+from .config import AppSettings, get_settings
+from .events import ApplicationShutdownEvent, ApplicationStartedEvent, EventBus
 
 
 class KateApplication(QObject):
@@ -43,7 +46,7 @@ class KateApplication(QObject):
         self.event_bus: EventBus = EventBus()
         self.database_manager: Optional[DatabaseManager] = None
         self.theme_manager: Optional[ThemeManager] = None
-        self.search_service: Optional[SearchService] = None
+        self.search_service = None
         self.update_manager: Optional[UpdateManager] = None
         self.main_window: Optional[MainWindow] = None
         
@@ -219,12 +222,19 @@ class KateApplication(QObject):
         """Start all application services."""
         self.logger.info("Starting application services...")
         
-        # Initialize search service
-        self.search_service = SearchService(
-            database_manager=self.database_manager,
-            event_bus=self.event_bus
-        )
-        await self.search_service.initialize()
+        # Initialize search service lazily to avoid startup hang
+        try:
+            from ..services.search_service import SearchService
+            self.search_service = SearchService(
+                database_manager=self.database_manager,
+                event_bus=self.event_bus
+            )
+            await self.search_service.initialize()
+            self.logger.info("Search service initialized successfully")
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize search service: {e}")
+            # Continue without search service for now
+            self.search_service = None
         
         # Initialize update manager with correct constructor parameters
         self.update_manager = UpdateManager(

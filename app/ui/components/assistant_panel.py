@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,

@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
 from PIL import ImageGrab
 
 
@@ -13,6 +14,10 @@ class ScreenCaptureService:
     """
     Manages screen capture and analysis functionality.
     """
+    
+    def __init__(self):
+        self.logger = logger.bind(component="ScreenCaptureService")
+        self.logger.info("ScreenCaptureService initialized")
 
     def capture_screen(self, output_dir: Path) -> Optional[Path]:
         """
@@ -24,14 +29,20 @@ class ScreenCaptureService:
         Returns:
             The path to the captured screenshot, or None if capture fails.
         """
+        self.logger.warning("SCREEN CAPTURE TRIGGERED! This might be causing the GUI screenshot bug!")
+        self.logger.info(f"Capturing screen to directory: {output_dir}")
+        
         try:
             screenshot = ImageGrab.grab()
             output_file = output_dir / "screenshot.png"
             screenshot.save(output_file, "PNG")
+            self.logger.info(f"Screenshot saved to: {output_file}")
             print(f"Screenshot saved to: {output_file}")
             return output_file
         except Exception as e:
+            self.logger.error(f"Error capturing screen: {e}")
             print(f"Error capturing screen: {e}")
+            return None
             return None
 
     async def analyze_screenshot(self, screenshot_path: Path) -> str:

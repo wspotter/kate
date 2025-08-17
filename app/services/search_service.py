@@ -7,24 +7,37 @@ with semantic similarity search using embeddings for documents and conversations
 
 import asyncio
 import time
-from typing import List, Dict, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
-from sqlalchemy import select, and_, or_, desc, func
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from ..core.events import EventBus, SearchStartedEvent, SearchCompletedEvent
+from ..core.events import EventBus, SearchCompletedEvent, SearchStartedEvent
 from ..database.manager import DatabaseManager
 from ..database.models import (
-    Conversation, Message, Document, DocumentChunk,
-    ConversationEmbedding, ChunkEmbedding
+    ChunkEmbedding,
+    Conversation,
+    ConversationEmbedding,
+    Document,
+    DocumentChunk,
+    Message,
 )
-from .embedding_service import EmbeddingService
-from .retrieval_service import RetrievalService, RetrievalQuery, RetrievalMode
+from .retrieval_service import RetrievalMode, RetrievalQuery, RetrievalService
 from .vector_store import VectorStore
+
+# Lazy import to avoid hanging during startup
+_EmbeddingService = None
+
+def _get_embedding_service():
+    global _EmbeddingService
+    if _EmbeddingService is None:
+        from .embedding_service import EmbeddingService
+        _EmbeddingService = EmbeddingService
+    return _EmbeddingService
 
 
 class SearchMode(Enum):
@@ -112,7 +125,7 @@ class SearchService:
         self,
         database_manager: DatabaseManager,
         event_bus: EventBus,
-        embedding_service: Optional[EmbeddingService] = None,
+        embedding_service = None,
         retrieval_service: Optional[RetrievalService] = None,
         vector_store: Optional[VectorStore] = None
     ):

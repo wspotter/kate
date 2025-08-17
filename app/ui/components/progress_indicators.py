@@ -5,7 +5,7 @@ Progress indicators for document indexing and background operations.
 from typing import Optional
 
 from loguru import logger
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, pyqtSignal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QFrame,

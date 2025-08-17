@@ -6,7 +6,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, pyqtSignal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QFont, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,10 +30,10 @@ class RAGWorker(QObject):
     """Worker for handling RAG processing in separate thread."""
     
     # Signals
-    response_ready = pyqtSignal(str)  # RAG response content
-    context_ready = pyqtSignal(list)  # Retrieved context sources
-    error_occurred = pyqtSignal(str)  # Error message
-    streaming_chunk = pyqtSignal(str)  # Streaming response chunk
+    response_ready = Signal(str)  # RAG response content
+    context_ready = Signal(list)  # Retrieved context sources
+    error_occurred = Signal(str)  # Error message
+    streaming_chunk = Signal(str)  # Streaming response chunk
 
     def __init__(self, rag_integration_service):
         super().__init__()

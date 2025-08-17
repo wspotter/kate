@@ -9,17 +9,17 @@ This module provides the main application entry point and handles:
 """
 
 import asyncio
-import sys
 import os
 import signal
+import sys
 from pathlib import Path
 from typing import Optional
 
 import click
 from loguru import logger
-from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
 # Add the project root to Python path for imports
 project_root = Path(__file__).parent.parent
@@ -28,7 +28,7 @@ sys.path.insert(0, str(project_root))
 from app.core.application import KateApplication
 from app.core.config import get_settings
 from app.utils.logging import setup_logging
-from app.utils.platform import setup_platform, get_platform_info
+from app.utils.platform import get_platform_info, setup_platform
 
 
 def setup_qt_application() -> QApplication:
@@ -38,13 +38,25 @@ def setup_qt_application() -> QApplication:
     Returns:
         Configured QApplication instance
     """
+    logger.info("Setting up Qt application...")
+    
+    # Set Qt environment variables for proper rendering
+    os.environ['QT_QPA_PLATFORMTHEME'] = 'qt5ct'
+    os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
+    os.environ['QT_SCALE_FACTOR'] = '1'
+    os.environ['QT_SCREEN_SCALE_FACTORS'] = '1'
+    logger.info("Qt environment variables set for proper rendering")
+    
     # Set application attributes before creating QApplication
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     
+    logger.info("Qt attributes set - High DPI scaling, pixmaps, and OpenGL context sharing enabled")
+    
     # Create Qt application
     app = QApplication(sys.argv)
+    logger.info("QApplication instance created successfully")
     
     # Set application metadata
     app.setApplicationName("Kate")
@@ -52,6 +64,8 @@ def setup_qt_application() -> QApplication:
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("Kate Team")
     app.setOrganizationDomain("kate-llm.com")
+    
+    logger.info("Qt application metadata configured")
     
     # Set application icon
     # TODO: Add actual icon file
