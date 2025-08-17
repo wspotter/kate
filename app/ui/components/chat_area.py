@@ -1,18 +1,81 @@
 """
-Chat area component for Kate LLM Client.
+Chat area component for Kate LLM Client with RAG integration.
 """
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QScrollArea, 
-    QFrame, QPushButton, QLabel, QSizePolicy, QApplication
-)
-from PySide6.QtCore import Qt, Signal, QTimer, QThread
-from PySide6.QtGui import QFont, QTextCursor, QKeySequence
+import asyncio
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
-from typing import List, Optional, Dict, Any
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, pyqtSignal
+from PySide6.QtGui import QFont, QKeySequence, QTextCursor
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...core.events import EventBus
-from .message_bubble import MessageBubble
+from ...services.rag_evaluation_service import RAGEvaluationService, ResponseEvaluation
+from .message_bubble import MessageBubble, StreamingMessageBubble
+
+
+class RAGWorker(QObject):
+    """Worker for handling RAG processing in separate thread."""
+    
+    # Signals
+    response_ready = pyqtSignal(str)  # RAG response content
+    context_ready = pyqtSignal(list)  # Retrieved context sources
+    error_occurred = pyqtSignal(str)  # Error message
+    streaming_chunk = pyqtSignal(str)  # Streaming response chunk
+
+    def __init__(self, rag_integration_service):
+        super().__init__()
+        self.rag_integration_service = rag_integration_service
+        
+    def process_message(self, conversation_id: str, user_message: str):
+        """Process message with RAG integration."""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Process the message
+            response = loop.run_until_complete(
+                self.rag_integration_service.process_message(conversation_id, user_message)
+            )
+            
+            # Emit results
+            self.response_ready.emit(response.content)
+            self.context_ready.emit(response.retrieved_sources)
+            
+            loop.close()
+            
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+            
+    def process_message_streaming(self, conversation_id: str, user_message: str):
+        """Process message with streaming RAG response."""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def stream_response():
+                async for chunk in self.rag_integration_service.process_message_streaming(
+                    conversation_id, user_message, lambda x: self.streaming_chunk.emit(x)
+                ):
+                    pass  # Chunks are emitted via callback
+                    
+            loop.run_until_complete(stream_response())
+            loop.close()
+            
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 
 class ChatScrollArea(QScrollArea):
@@ -168,22 +231,39 @@ class MessageInputArea(QWidget):
 
 class ChatArea(QWidget):
     """
-    Main chat area widget for displaying conversations and message input.
+    Main chat area widget for displaying conversations and message input with RAG integration.
     """
     
     # Signals
     message_sent = Signal(str)
+    rag_context_updated = Signal(list)  # Emitted when RAG context is updated
+    evaluation_received = Signal(object)  # Emitted when evaluation is received
     
-    def __init__(self, event_bus: EventBus):
+    def __init__(self, event_bus: EventBus, rag_integration_service=None, evaluation_service: Optional[RAGEvaluationService] = None):
         super().__init__()
         self.event_bus = event_bus
+        self.rag_integration_service = rag_integration_service
+        self.evaluation_service = evaluation_service
         self.logger = logger.bind(component="ChatArea")
         
         self.current_conversation_id: Optional[str] = None
         self.messages: List[MessageBubble] = []
+        self.current_streaming_message: Optional[StreamingMessageBubble] = None
         
+        # RAG worker and thread
+        self.rag_worker = None
+        self.rag_thread = None
+        
+        self.setAcceptDrops(True)
         self._setup_ui()
         self._connect_signals()
+        
+        # Initialize RAG worker if service is available
+        if self.rag_integration_service:
+            self._setup_rag_worker()
+        
+        # Add drop overlay
+        self.drop_overlay = DropOverlay(self)
         
     def _setup_ui(self) -> None:
         """Set up the chat area UI."""
@@ -221,12 +301,18 @@ class ChatArea(QWidget):
         self.info_label = QLabel("")
         self.info_label.setFont(QFont("Arial", 10))
         
+        # RAG status indicator
+        self.rag_status_label = QLabel("RAG: Ready")
+        self.rag_status_label.setFont(QFont("Arial", 9))
+        self.rag_status_label.setStyleSheet("color: #00ff00;")  # Green when ready
+        
         title_layout = QVBoxLayout()
         title_layout.addWidget(self.title_label)
         title_layout.addWidget(self.info_label)
         
         layout.addLayout(title_layout)
         layout.addStretch()
+        layout.addWidget(self.rag_status_label)
         
         return header
         
@@ -251,6 +337,22 @@ class ChatArea(QWidget):
         """Connect UI signals."""
         self.input_area.message_sent.connect(self._handle_message_sent)
         
+    def _setup_rag_worker(self) -> None:
+        """Set up RAG worker thread."""
+        self.rag_thread = QThread()
+        self.rag_worker = RAGWorker(self.rag_integration_service)
+        self.rag_worker.moveToThread(self.rag_thread)
+        
+        # Connect signals
+        self.rag_worker.response_ready.connect(self._handle_rag_response)
+        self.rag_worker.context_ready.connect(self._handle_rag_context)
+        self.rag_worker.error_occurred.connect(self._handle_rag_error)
+        self.rag_worker.streaming_chunk.connect(self._handle_streaming_chunk)
+        
+        self.rag_thread.start()
+        
+        self.logger.info("RAG worker thread initialized")
+        
     def _handle_message_sent(self, message: str) -> None:
         """Handle message sent from input area."""
         if not self.current_conversation_id:
@@ -263,12 +365,103 @@ class ChatArea(QWidget):
         # Emit signal for external handling
         self.message_sent.emit(message)
         
-        # Add a placeholder assistant response
-        self._add_placeholder_response()
+        # Process with RAG if available
+        if self.rag_integration_service and self.rag_worker:
+            self._process_with_rag(message)
+        else:
+            # Fallback to placeholder response
+            self._add_placeholder_response()
+        
+    def _process_with_rag(self, message: str) -> None:
+        """Process message with RAG integration."""
+        try:
+            # Update status
+            self.set_loading(True)
+            self.rag_status_label.setText("RAG: Processing...")
+            self.rag_status_label.setStyleSheet("color: #ffaa00;")  # Orange when processing
+            
+            # Create streaming message bubble for assistant response
+            self.current_streaming_message = StreamingMessageBubble("assistant")
+            self.messages.append(self.current_streaming_message)
+            self.chat_scroll.add_message_widget(self.current_streaming_message)
+            
+            # Process message in worker thread (use streaming)
+            QTimer.singleShot(10, lambda: self.rag_worker.process_message_streaming(
+                self.current_conversation_id, message
+            ))
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process with RAG: {e}")
+            self._handle_rag_error(str(e))
+            
+    def _handle_rag_response(self, response_content: str) -> None:
+        """Handle RAG response."""
+        try:
+            # Finish streaming message if active
+            if self.current_streaming_message:
+                self.current_streaming_message.finish_streaming()
+                
+                # Check if there's evaluation data in the response metadata
+                # This would be available from the RAG integration service
+                if hasattr(self.current_streaming_message, 'pending_evaluation') and self.current_streaming_message.pending_evaluation:
+                    # Emit evaluation signal for assistant panel updates
+                    self.evaluation_received.emit(self.current_streaming_message.pending_evaluation)
+                
+                self.current_streaming_message = None
+            else:
+                # Add as regular message if no streaming
+                self.add_message("assistant", response_content)
+            
+            # Update status
+            self.set_loading(False)
+            self.rag_status_label.setText("RAG: Ready")
+            self.rag_status_label.setStyleSheet("color: #00ff00;")  # Green when ready
+            
+            self.logger.info("RAG response processed successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to handle RAG response: {e}")
+            
+    def _handle_rag_context(self, sources: list) -> None:
+        """Handle RAG context sources."""
+        try:
+            self.rag_context_updated.emit(sources)
+            self.logger.debug(f"RAG context updated with {len(sources)} sources")
+        except Exception as e:
+            self.logger.error(f"Failed to handle RAG context: {e}")
+            
+    def _handle_rag_error(self, error_message: str) -> None:
+        """Handle RAG processing error."""
+        try:
+            # Finish streaming message if active
+            if self.current_streaming_message:
+                self.current_streaming_message.append_content(f"\n\nError: {error_message}")
+                self.current_streaming_message.finish_streaming()
+                self.current_streaming_message = None
+            else:
+                # Add error message
+                self.add_message("assistant", f"Sorry, I encountered an error: {error_message}")
+            
+            # Update status
+            self.set_loading(False)
+            self.rag_status_label.setText("RAG: Error")
+            self.rag_status_label.setStyleSheet("color: #ff0000;")  # Red when error
+            
+            self.logger.error(f"RAG processing error: {error_message}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to handle RAG error: {e}")
+            
+    def _handle_streaming_chunk(self, chunk: str) -> None:
+        """Handle streaming response chunk."""
+        try:
+            if self.current_streaming_message:
+                self.current_streaming_message.append_content(chunk)
+        except Exception as e:
+            self.logger.error(f"Failed to handle streaming chunk: {e}")
         
     def _add_placeholder_response(self) -> None:
-        """Add a placeholder AI response."""
-        # This will be replaced with real LLM integration
+        """Add a placeholder AI response when RAG is not available."""
         placeholder_responses = [
             "I understand your question. Let me help you with that.",
             "That's an interesting point. Here's my perspective...",
@@ -295,6 +488,16 @@ class ChatArea(QWidget):
         # Clear existing messages
         self.clear_messages()
         
+        # Initialize RAG context for this conversation
+        if self.rag_integration_service:
+            try:
+                # Create chat context for this conversation
+                asyncio.create_task(
+                    self.rag_integration_service.create_chat_context(conversation_id)
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to create RAG context: {e}")
+        
         # Load conversation messages (placeholder for now)
         self._load_sample_messages()
         
@@ -310,11 +513,20 @@ class ChatArea(QWidget):
             self.add_message("user", "Can you explain neural networks?")
             self.add_message("assistant", "Neural networks are computing systems inspired by biological neural networks. They consist of interconnected nodes (neurons) that process and transmit information. Each connection has a weight that adjusts during learning to improve the network's ability to recognize patterns and make predictions.")
             
-    def add_message(self, role: str, content: str, timestamp: Optional[str] = None) -> None:
+    def add_message(self, role: str, content: str, timestamp: Optional[str] = None, evaluation_data: Optional[Dict[str, Any]] = None) -> None:
         """Add a message to the chat area."""
-        message_bubble = MessageBubble(role, content, timestamp)
+        message_bubble = MessageBubble(role, content, timestamp, evaluation_data)
+        
+        # Connect evaluation details signal
+        if role == "assistant" and evaluation_data:
+            message_bubble.evaluation_details_requested.connect(self._handle_evaluation_details_request)
+            
         self.messages.append(message_bubble)
         self.chat_scroll.add_message_widget(message_bubble)
+        
+        # Emit evaluation signal if this is an assistant message with evaluation
+        if role == "assistant" and evaluation_data:
+            self.evaluation_received.emit(evaluation_data)
         
         self.logger.debug(f"Added {role} message: {content[:50]}...")
         
@@ -322,6 +534,7 @@ class ChatArea(QWidget):
         """Clear all messages from the chat area."""
         self.chat_scroll.clear_messages()
         self.messages.clear()
+        self.current_streaming_message = None
         
     def get_conversation_id(self) -> Optional[str]:
         """Get the current conversation ID."""
@@ -334,3 +547,114 @@ class ChatArea(QWidget):
             self.info_label.setText("AI is thinking...")
         else:
             self.info_label.setText("Ready to chat")
+            
+    def set_rag_integration_service(self, rag_integration_service) -> None:
+        """Set the RAG integration service."""
+        self.rag_integration_service = rag_integration_service
+        self._setup_rag_worker()
+        self.logger.info("RAG integration service connected to chat area")
+        
+    def set_evaluation_service(self, evaluation_service: RAGEvaluationService) -> None:
+        """Set the evaluation service."""
+        self.evaluation_service = evaluation_service
+        self.logger.info("Evaluation service connected to chat area")
+        
+    def _handle_evaluation_details_request(self, evaluation_data: Dict[str, Any]) -> None:
+        """Handle request to show evaluation details."""
+        try:
+            # Create a detailed evaluation info string
+            details = f"""
+Evaluation Details:
+
+Overall Score: {evaluation_data.get('overall_score', 0):.3f}
+
+Metric Breakdown:
+• Relevance: {evaluation_data.get('relevance_score', 0):.3f}
+• Coherence: {evaluation_data.get('coherence_score', 0):.3f}
+• Completeness: {evaluation_data.get('completeness_score', 0):.3f}
+• Citation Accuracy: {evaluation_data.get('citation_accuracy', 0):.3f}
+• Factual Accuracy: {evaluation_data.get('factual_accuracy', 0):.3f}
+
+Performance:
+• Response Time: {evaluation_data.get('response_time', 0):.2f}s
+• Sources Used: {evaluation_data.get('retrieval_context', {}).get('total_retrieved', 0)}
+• Confidence: {evaluation_data.get('confidence_score', 0):.3f}
+"""
+            
+            # For now, log the details. In a full implementation,
+            # this could open a detailed evaluation dialog
+            self.logger.info(f"Evaluation details requested:\n{details}")
+            
+            # Update the status to show evaluation details are available
+            self.rag_status_label.setText("RAG: Evaluation details available")
+            self.rag_status_label.setStyleSheet("color: #00aaff;")  # Blue when showing details
+            
+        except Exception as e:
+            self.logger.error(f"Failed to handle evaluation details request: {e}")
+            
+    def update_message_evaluation(self, message_index: int, evaluation_data: Dict[str, Any]) -> None:
+        """Update evaluation data for a specific message."""
+        try:
+            if 0 <= message_index < len(self.messages):
+                message = self.messages[message_index]
+                if message.role == "assistant":
+                    message.update_evaluation(evaluation_data)
+                    self.evaluation_received.emit(evaluation_data)
+                    self.logger.debug(f"Updated evaluation for message {message_index}")
+        except Exception as e:
+            self.logger.error(f"Failed to update message evaluation: {e}")
+        
+    def cleanup(self) -> None:
+        """Cleanup resources."""
+        if self.rag_thread and self.rag_thread.isRunning():
+            self.rag_thread.quit()
+            self.rag_thread.wait()
+        self.logger.info("Chat area cleaned up")
+
+    def resizeEvent(self, event):
+        """Resize the drop overlay."""
+        self.drop_overlay.resize(event.size())
+        event.accept()
+
+    def dragEnterEvent(self, event):
+        """Handle drag enter events."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.drop_overlay.show()
+
+    def dragLeaveEvent(self, event):
+        """Handle drag leave events."""
+        self.drop_overlay.hide()
+
+    def dropEvent(self, event):
+        """Handle drop events for files."""
+        self.drop_overlay.hide()
+        urls = event.mimeData().urls()
+        for url in urls:
+            if url.isLocalFile():
+                file_path = url.toLocalFile()
+                self.logger.info(f"File dropped: {file_path}")
+                # In a real implementation, you would process the file here
+                # and add it to the message or a message bubble.
+                self.add_message("user", f"Dropped file: {file_path}")
+
+
+class DropOverlay(QWidget):
+    """Overlay for showing drag-and-drop feedback."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            background-color: rgba(0, 120, 212, 0.7);
+            border-radius: 12px;
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        self.drop_label = QLabel("Drop Files Here")
+        self.drop_label.setFont(QFont("Arial", 24, QFont.Bold))
+        self.drop_label.setStyleSheet("color: white;")
+        
+        layout.addWidget(self.drop_label)
+        self.hide()

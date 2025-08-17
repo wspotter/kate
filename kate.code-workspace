@@ -1,0 +1,219 @@
+{
+    "folders": [
+        {
+            "name": "Kate LLM Desktop Client",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": false,
+        "python.linting.mypyEnabled": true,
+        "python.formatting.provider": "black",
+        "python.formatting.blackArgs": ["--line-length=88"],
+        "python.sortImports.args": ["--profile=black"],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/.pytest_cache": true,
+            "**/.mypy_cache": true,
+            "**/.ruff_cache": true,
+            "**/node_modules": true,
+            "**/.git": false,
+            "**/.DS_Store": true,
+            "**/Thumbs.db": true,
+            "**/.venv": false
+        },
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": [
+            "tests"
+        ],
+        "python.analysis.typeCheckingMode": "strict",
+        "python.analysis.autoImportCompletions": true,
+        "ruff.args": ["--config=pyproject.toml"],
+        "mypy.dmypyExecutable": "./.venv/bin/dmypy",
+        "mypy.configFile": "pyproject.toml",
+        "git.ignoreLimitWarning": true,
+        "explorer.compactFolders": false,
+        "files.watcherExclude": {
+            "**/.git/objects/**": true,
+            "**/.git/subtree-cache/**": true,
+            "**/node_modules/*/**": true,
+            "**/.venv/**": true,
+            "**/__pycache__/**": true
+        },
+        "terminal.integrated.cwd": "${workspaceFolder}",
+        "python.envFile": "${workspaceFolder}/.env",
+        "editor.rulers": [88],
+        "python.analysis.extraPaths": ["./app"],
+        "python.analysis.include": ["./app", "./tests"],
+        "python.analysis.exclude": [
+            "**/__pycache__",
+            "**/.pytest_cache",
+            "**/.mypy_cache",
+            "**/.ruff_cache",
+            "**/build",
+            "**/dist"
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.black-formatter",
+            "ms-python.mypy-type-checker",
+            "charliermarsh.ruff",
+            "ms-python.pytest",
+            "donjayamanne.python-environment-manager",
+            "ms-vscode.vscode-json",
+            "redhat.vscode-yaml",
+            "ms-vscode.vscode-typescript-next",
+            "github.vscode-github-actions",
+            "github.vscode-pull-request-github"
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Install Dependencies",
+                "type": "shell",
+                "command": "poetry install",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Run Kate",
+                "type": "shell",
+                "command": "poetry run python -m app.main",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Run Tests",
+                "type": "shell",
+                "command": "poetry run pytest",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Type Check",
+                "type": "shell",
+                "command": "poetry run mypy app/",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Format Code",
+                "type": "shell",
+                "command": "poetry run black app/ tests/",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Lint Code",
+                "type": "shell",
+                "command": "poetry run ruff check app/ tests/",
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "Build Executable",
+                "type": "shell",
+                "command": "poetry run pyinstaller build/pyinstaller/kate.spec",
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            }
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Launch Kate",
+                "type": "python",
+                "request": "launch",
+                "module": "app.main",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}"
+                },
+                "args": []
+            },
+            {
+                "name": "Debug Kate with Console",
+                "type": "python",
+                "request": "launch",
+                "module": "app.main",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}",
+                    "KATE_DEBUG": "true"
+                },
+                "args": ["--debug"]
+            },
+            {
+                "name": "Run Tests",
+                "type": "python",
+                "request": "launch",
+                "module": "pytest",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}"
+                },
+                "args": ["tests/", "-v"]
+            }
+        ]
+    }
+}

@@ -2,17 +2,30 @@
 Assistant panel component for Kate LLM Client.
 """
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
-    QTextEdit, QScrollArea, QFrame, QPushButton, QSlider,
-    QSpinBox, QCheckBox, QGroupBox, QFormLayout
-)
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
-from loguru import logger
-from typing import Dict, Any, List, Optional
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ...core.events import EventBus
+from ...services.rag_evaluation_service import RAGEvaluationService, ResponseEvaluation
 
 
 class AssistantCard(QFrame):
@@ -288,6 +301,183 @@ class ModelSettingsWidget(QWidget):
         self.stream_checkbox.setChecked(self.settings['stream'])
 
 
+class EvaluationMetricsWidget(QWidget):
+    """Widget for displaying real-time evaluation metrics."""
+    
+    def __init__(self):
+        super().__init__()
+        self.current_evaluation: Optional[ResponseEvaluation] = None
+        self._setup_ui()
+        
+    def _setup_ui(self) -> None:
+        """Set up the evaluation metrics UI."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        
+        # Overall score indicator
+        overall_group = QGroupBox("Response Quality")
+        overall_layout = QVBoxLayout(overall_group)
+        
+        self.overall_score_label = QLabel("--")
+        self.overall_score_label.setFont(QFont("Arial", 14, QFont.Bold))
+        self.overall_score_label.setAlignment(Qt.AlignCenter)
+        
+        self.overall_score_bar = QProgressBar()
+        self.overall_score_bar.setRange(0, 100)
+        self.overall_score_bar.setValue(0)
+        self.overall_score_bar.setFixedHeight(8)
+        
+        overall_layout.addWidget(self.overall_score_label)
+        overall_layout.addWidget(self.overall_score_bar)
+        
+        layout.addWidget(overall_group)
+        
+        # Individual metrics
+        metrics_group = QGroupBox("Metrics Breakdown")
+        metrics_layout = QFormLayout(metrics_group)
+        
+        self.relevance_label = QLabel("--")
+        self.coherence_label = QLabel("--")
+        self.completeness_label = QLabel("--")
+        self.citation_label = QLabel("--")
+        self.confidence_label = QLabel("--")
+        
+        metrics_layout.addRow("Relevance:", self.relevance_label)
+        metrics_layout.addRow("Coherence:", self.coherence_label)
+        metrics_layout.addRow("Completeness:", self.completeness_label)
+        metrics_layout.addRow("Citations:", self.citation_label)
+        metrics_layout.addRow("Confidence:", self.confidence_label)
+        
+        layout.addWidget(metrics_group)
+        
+        # Performance indicators
+        perf_group = QGroupBox("Performance")
+        perf_layout = QFormLayout(perf_group)
+        
+        self.response_time_label = QLabel("--")
+        self.sources_count_label = QLabel("--")
+        self.retrieval_time_label = QLabel("--")
+        
+        perf_layout.addRow("Response Time:", self.response_time_label)
+        perf_layout.addRow("Sources Used:", self.sources_count_label)
+        perf_layout.addRow("Retrieval Time:", self.retrieval_time_label)
+        
+        layout.addWidget(perf_group)
+        
+        # View details button
+        self.details_button = QPushButton("View Detailed Analysis")
+        self.details_button.setEnabled(False)
+        layout.addWidget(self.details_button)
+        
+        # Apply styling
+        self._apply_styling()
+        
+    def _apply_styling(self) -> None:
+        """Apply styling to the evaluation metrics widget."""
+        self.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                margin: 4px 0px;
+                padding-top: 8px;
+                color: #ffffff;
+            }
+            
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px 0 4px;
+            }
+            
+            QLabel {
+                color: #ffffff;
+                padding: 2px;
+            }
+            
+            QProgressBar {
+                border: 1px solid #555555;
+                border-radius: 3px;
+                background-color: #2b2b2b;
+            }
+            
+            QProgressBar::chunk {
+                border-radius: 2px;
+            }
+            
+            QPushButton {
+                background-color: #0078d4;
+                border: none;
+                border-radius: 4px;
+                color: #ffffff;
+                font-weight: bold;
+                padding: 6px 8px;
+            }
+            
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            
+            QPushButton:disabled {
+                background-color: #404040;
+                color: #888888;
+            }
+        """)
+        
+    def update_evaluation(self, evaluation: ResponseEvaluation) -> None:
+        """Update the display with new evaluation data."""
+        self.current_evaluation = evaluation
+        
+        # Update overall score
+        score_text = f"{evaluation.overall_score:.3f}"
+        self.overall_score_label.setText(score_text)
+        self.overall_score_bar.setValue(int(evaluation.overall_score * 100))
+        
+        # Color code the overall score
+        if evaluation.overall_score >= 0.8:
+            color = "#00ff00"  # Green
+            self.overall_score_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
+        elif evaluation.overall_score >= 0.6:
+            color = "#ffaa00"  # Orange
+            self.overall_score_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
+        else:
+            color = "#ff4444"  # Red
+            self.overall_score_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
+            
+        # Update individual metrics
+        self.relevance_label.setText(f"{evaluation.relevance_score:.3f}")
+        self.coherence_label.setText(f"{evaluation.coherence_score:.3f}")
+        self.completeness_label.setText(f"{evaluation.completeness_score:.3f}")
+        self.citation_label.setText(f"{evaluation.citation_accuracy:.3f}")
+        self.confidence_label.setText(f"{evaluation.confidence_score:.3f}")
+        
+        # Update performance metrics
+        self.response_time_label.setText(f"{evaluation.response_time:.2f}s")
+        self.sources_count_label.setText(str(evaluation.retrieval_context.total_retrieved))
+        self.retrieval_time_label.setText(f"{evaluation.retrieval_context.retrieval_time:.2f}s")
+        
+        # Enable details button
+        self.details_button.setEnabled(True)
+        
+    def clear_evaluation(self) -> None:
+        """Clear the evaluation display."""
+        self.current_evaluation = None
+        
+        # Reset all labels
+        labels = [
+            self.overall_score_label, self.relevance_label, self.coherence_label,
+            self.completeness_label, self.citation_label, self.confidence_label,
+            self.response_time_label, self.sources_count_label, self.retrieval_time_label
+        ]
+        
+        for label in labels:
+            label.setText("--")
+            
+        self.overall_score_bar.setValue(0)
+        self.details_button.setEnabled(False)
+
+
 class AssistantPanel(QWidget):
     """
     Right panel for assistant selection and model settings.
@@ -297,10 +487,12 @@ class AssistantPanel(QWidget):
     assistant_changed = Signal(str)  # assistant_id
     assistant_selected = Signal(str)  # assistant_id
     model_settings_changed = Signal(dict)
+    evaluation_details_requested = Signal(object)  # ResponseEvaluation
     
-    def __init__(self, event_bus: EventBus):
+    def __init__(self, event_bus: EventBus, evaluation_service: Optional[RAGEvaluationService] = None):
         super().__init__()
         self.event_bus = event_bus
+        self.evaluation_service = evaluation_service
         self.logger = logger.bind(component="AssistantPanel")
         
         self.assistants: Dict[str, Dict[str, Any]] = {}
@@ -345,7 +537,17 @@ class AssistantPanel(QWidget):
         self.model_settings = ModelSettingsWidget()
         settings_scroll.setWidget(self.model_settings)
         
-        layout.addWidget(settings_scroll, 1)
+        layout.addWidget(settings_scroll)
+        
+        # Evaluation metrics section
+        eval_label = QLabel("Response Evaluation")
+        eval_label.setFont(QFont("Arial", 11, QFont.Bold))
+        layout.addWidget(eval_label)
+        
+        self.evaluation_widget = EvaluationMetricsWidget()
+        layout.addWidget(self.evaluation_widget)
+        
+        layout.addStretch()
         
         # Apply styling
         self._apply_styling()
@@ -414,6 +616,7 @@ class AssistantPanel(QWidget):
         """Connect UI signals."""
         self.assistant_combo.currentTextChanged.connect(self._on_assistant_changed)
         self.model_settings.settings_changed.connect(self._on_settings_changed)
+        self.evaluation_widget.details_button.clicked.connect(self._on_evaluation_details_requested)
         
     def _load_assistants(self) -> None:
         """Load available assistants."""
@@ -511,6 +714,11 @@ class AssistantPanel(QWidget):
         """Handle model settings change."""
         self.model_settings_changed.emit(settings)
         
+    def _on_evaluation_details_requested(self) -> None:
+        """Handle evaluation details request."""
+        if self.evaluation_widget.current_evaluation:
+            self.evaluation_details_requested.emit(self.evaluation_widget.current_evaluation)
+        
     def get_current_assistant_id(self) -> Optional[str]:
         """Get the currently selected assistant ID."""
         return self.current_assistant_id
@@ -542,3 +750,15 @@ class AssistantPanel(QWidget):
                     self._select_assistant(first_id)
                 else:
                     self.current_assistant_id = None
+                    
+    def update_evaluation(self, evaluation: ResponseEvaluation) -> None:
+        """Update the evaluation metrics display."""
+        self.evaluation_widget.update_evaluation(evaluation)
+        
+    def clear_evaluation(self) -> None:
+        """Clear the evaluation metrics display."""
+        self.evaluation_widget.clear_evaluation()
+        
+    def set_evaluation_service(self, evaluation_service: RAGEvaluationService) -> None:
+        """Set the evaluation service."""
+        self.evaluation_service = evaluation_service

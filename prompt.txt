@@ -1,0 +1,433 @@
+Goal: Produce a Python-based, cross-platform desktop client that preserves the repository’s features (multi-provider LLM chat, assistants, docs processing, themes, MCP, etc.), improves maintainability, and leverages Python’s ecosystem.
+
+Repository Analysis
+
+Objective: Give an LLM a deterministic way to “understand” the source project before translating.
+
+Clone & enumerate
+
+git clone [USER_REPOSITORY_URL]
+
+
+Inspect top-level structure: .github/, packages/, src/, resources/, docs/, configs (electron-builder.yml, vite.config.ts, package.json, tsconfig*).
+
+Identify tech stack
+
+Primary: TypeScript + Electron + Vite.
+
+Package manager: Yarn/Node.
+
+Read product docs
+
+README.md, docs/*, feature list, roadmap.
+
+Infer modules
+
+Electron main (boot, windows, tray, auto-updates).
+
+Renderer (React/TS UI).
+
+Providers (OpenAI, Anthropic, Gemini, Ollama, LM Studio).
+
+MCP bridge.
+
+File processing (PDF/Office).
+
+Assistants & conversation mgmt.
+
+Themes & settings.
+
+Functionality Mapping
+
+Objective: Ensure feature parity.
+
+Area	Behavior	Inputs	Outputs
+App shell	Launch, windows, tray	CLI flags, config	OS windows, tray
+Providers	OpenAI, Anthropic, Gemini, etc.	API keys, prompts	Chat responses
+Local models	Ollama, LM Studio	Model name + prompt	Responses
+Conversations	Threads, assistants	User messages	History persisted
+Files	Text, PDF, Office, images	File paths	Parsed text/embeddings
+MCP	External servers	Endpoints	Tools/resources
+Settings	API keys, themes, hotkeys	User config	Persistent config
+Updates	Auto-update	Version check	Installer download
+Dependency Translation (Original → Python)
+Original	Purpose	Python Equivalent
+Electron	Desktop shell	PySide6 / PyQt6, or pywebview + FastAPI
+electron-builder	Packaging	PyInstaller / Briefcase
+React + Vite	UI	Qt Widgets/QML, or pywebview with web UI
+axios/fetch	HTTP	httpx
+WebSockets	Realtime	websockets / httpx (async)
+electron-store	Config	pydantic-settings + platformdirs
+sqlite/lowdb	Storage	SQLite + SQLAlchemy
+PDF/Doc handlers	File processing	pypdf, python-docx, openpyxl, pytesseract
+i18n libs	Localization	Babel
+LLM APIs	Providers	openai, anthropic, google-generativeai, ollama
+MCP	Tools protocol	mcp (Python SDK)
+Auto-updates	Version check	PyUpdater or custom
+Architecture Design (Python)
+stdapp/
+  app/
+    main.py         # entry point
+    ui/             # UI layer (Qt/webview)
+    system/         # tray, shortcuts
+  core/
+    config.py
+    logging.py
+    db.py
+    models.py
+  providers/
+    base.py
+    openai.py
+    anthropic.py
+    gemini.py
+    ollama.py
+  features/
+    chat/
+    assistants/
+    files/
+    mcp/
+  api/
+    server.py
+  tests/
+
+Code Translation Plan (per module)
+
+Identify file → list its exports/functions.
+
+Break into pure logic vs I/O edges.
+
+Write Python skeleton (classes/functions).
+
+Apply Pythonic idioms: dataclasses, asyncio, context managers.
+
+Add unit tests before/with code.
+
+Document module.
+
+Example Provider Adapter
+# providers/base.py
+from abc import ABC, abstractmethod
+from typing import AsyncIterator, Iterable, Dict
+
+class ChatProvider(ABC):
+    @abstractmethod
+    def chat(self, messages: Iterable[Dict[str, str]], **kwargs) -> str: ...
+    @abstractmethod
+    async def achat_stream(self, messages: Iterable[Dict[str, str]], **kwargs) -> AsyncIterator[str]: ...
+
+Testing Strategy
+
+Framework: pytest, pytest-asyncio, pytest-qt.
+
+Unit tests: providers, config, DB.
+
+Integration tests: conversation flow, file ingest, MCP handshake.
+
+Golden tests: compare outputs with original app transcripts.
+
+Mock network with httpx.MockTransport.
+
+Dependency & Environment Management
+
+pyproject.toml (Poetry):
+
+[tool.poetry]
+name = "stdapp"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic-settings = "^2.6"
+httpx = "^0.27"
+sqlalchemy = "^2.0"
+keyring = "^25.0"
+PySide6 = "^6.7"
+openai = "^1.40"
+anthropic = "^0.39"
+google-generativeai = "^0.7"
+ollama = "^0.3"
+websockets = "^12.0"
+mcp = "^1.7"
+pyinstaller = "^6.6"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.23"
+pytest-qt = "^4.4"
+black = "^24.8"
+ruff = "^0.6"
+mypy = "^1.11"
+
+Documentation Plan
+
+README.md: overview + quickstart.
+
+docs/SETUP.md: environment setup.
+
+docs/USAGE.md: providers, assistants, MCP.
+
+docs/MIGRATION.md: differences from original.
+
+docs/ARCHITECTURE.md: diagrams + module map.
+
+docs/TROUBLESHOOTING.md: common issues.
+
+Implementation Steps (LLM Checklist)
+
+Setup Python env (3.11, venv/poetry).
+
+Create project skeleton (stdapp/).
+
+Add config/logging/db.
+
+Implement provider base + OpenAI adapter.
+
+Add chat + assistant features.
+
+Implement MCP client.
+
+Implement file ingestion.
+
+Add UI layer (Qt or webview).
+
+Add settings + secrets.
+
+Add packaging + auto-update.
+
+Write docs + tests.
+
+Release v0.1.0 (installers, docs).
+
+Error Handling & Fallbacks
+
+Unknown logic → stub w/ TODO + logs.
+
+Missing libs → replace w/ Py equivalents.
+
+Provider outages → retries + user-friendly messages.
+
+Security: store API keys via OS keyring, redact logs, prompt for MCP permissions.
+
+Validation & Deployment
+
+Run canned workflows in original + rewritten app → compare outputs.
+
+Deploy via PyInstaller (Win, Mac, Linux).
+
+Optional Docker for API-only mode.
+
+Update channel: check GitHub Releases.
+
+Review & Iteration
+
+Lint: ruff, format: black.
+
+Type-check: mypy --strict.
+
+Coverage ≥80%.
+
+Accessibility: theme contrast, shortcuts.
+
+Performance profiling on large files/conversations.
+
+Templates
+Config Example
+# core/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    theme: str = "system"
+    db_url: str = "sqlite:///~/.local/share/stdapp/chats.db"
+
+settings = Settings()
+
+CLI Entry
+# app/main.py
+import sys
+from stdapp.ui.windows import run_app
+
+def main():
+    run_app()
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+    [USER_REPOSITORY_URL] = https://github.com/wspotter/kate
+
+
+    1. Repository Analysis
+
+ Clone the repository from [USER_REPOSITORY_URL].
+
+ Identify primary programming language(s) and frameworks.
+
+ Document repository structure (e.g., /src, /lib, /tests).
+
+ Extract dependency list (package.json, Gemfile, etc.).
+
+ Note existing documentation (README, wiki, inline comments).
+
+2. Functionality Mapping
+
+ List all core modules, grouped by feature.
+
+ Document inputs/outputs for each module.
+
+ Map inter-module dependencies (e.g., providers → ui → utils).
+
+ Create a high-level data flow diagram.
+
+3. Dependency Translation
+Original Dependency	Purpose	Python Equivalent	Notes
+e.g. axios	HTTP requests	httpx / requests	Prefer httpx for async
+e.g. express	Web server	fastapi / flask	FastAPI recommended
+4. Architecture Design
+
+ Define Python package structure (PEP 8 compliant):
+
+stdapp/
+  __init__.py
+  providers/
+  utils/
+  core/
+tests/
+  test_providers/
+  test_utils/
+
+
+ Use logging (logging module), not print.
+
+ Centralize configuration (pydantic or .env).
+
+ Ensure modular design (no hardcoded globals).
+
+5. Code Translation Protocol
+
+For each file:
+
+Identify functionality (class, methods, constants).
+
+Design equivalent Python structures (dataclasses, functions, context managers).
+
+Translate logic step-by-step, keeping naming consistent.
+
+Replace dependencies with Python equivalents.
+
+Insert type hints (typing).
+
+Add docstrings.
+
+Write unit tests (pytest).
+
+6. Testing Strategy
+
+ Install pytest.
+
+ Write unit tests for each translated module.
+
+ Add integration tests for workflows.
+
+ Mirror test coverage from original repo if available.
+
+ Run tests immediately after each file translation.
+
+7. Dependency Management
+
+ Use poetry or venv for env management.
+
+ Create pyproject.toml (preferred) or requirements.txt.
+
+ Pin versions for reproducibility.
+
+Example requirements.txt:
+
+httpx==0.27.0
+fastapi==0.115.0
+pydantic==2.9.0
+pytest==8.2.0
+
+8. Documentation
+
+ Write README.md with:
+
+Setup steps
+
+Usage examples
+
+Migration notes (differences from original)
+
+ Add TROUBLESHOOTING.md (e.g., venv issues, missing libs).
+
+ Document architecture in docs/architecture.md.
+
+9. Implementation Steps (Task List for LLMs)
+
+Setup Environment
+
+Install Python 3.11+
+
+Create virtual env (python -m venv .venv)
+
+Install initial dependencies
+
+Create Project Skeleton
+
+Scaffold /stdapp package
+
+Scaffold /tests
+
+Iterative Module Translation (repeat for each file)
+
+Translate file → Python
+
+Write corresponding tests
+
+Run pytest and confirm success
+
+Integration Testing
+
+Wire modules together
+
+Test core workflows
+
+Validation
+
+Compare outputs of old app vs new Python app (if runnable side-by-side).
+
+Deployment Prep
+
+Add Dockerfile (if needed)
+
+Document run commands
+
+10. Error Handling & Fallbacks
+
+If a dependency has no Python equivalent →
+
+Use subprocess call, or
+
+Mark with # TODO: manual implementation
+
+If logic unclear →
+
+Add placeholder raising NotImplementedError
+
+Log context for human review
+
+11. Usage Protocol (For LLMs)
+
+❌ Do NOT attempt to rewrite the whole repo in one response.
+
+✅ Instead:
+
+Pick one module or file.
+
+Apply the Code Translation Protocol.
+
+Write Python code + unit tests.
+
+STOP. Wait for next instruction.
+
+This ensures incremental correctness, avoids token exhaustion, and allows human validation.
