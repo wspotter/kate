@@ -184,3 +184,70 @@ Temporarily replace complex components with simple Qt widgets to isolate the iss
 ---
 
 **The issue is very close to resolution - it's isolated to a specific blocking operation in Kate's UI component initialization.**
+
+---
+
+## 🔄 UPDATE 2025-08-19 – PARTIAL LAYOUT REFRESH INTRODUCED REGRESSION
+
+### Context
+
+While implementing layout improvements (assistant panel scrollability + dynamic splitter sizing + width constraints removal), `app/ui/main_window.py` was incrementally patched. During iterative edits the `_setup_menu` method body became **dedented** (its statements now sit at class scope), producing a cascade of syntax / mypy “self not defined” errors. Type-hint cleanup (replacing `QKeySequence.New` etc. with string shortcuts) happened after the file was already structurally broken, so current errors are dominated by indentation, not typing.
+
+### Current Good Changes (Keep)
+
+1. Assistant panel now wrapped in a single outer `QScrollArea` (see `assistant_panel.py`).
+2. Dynamic initial splitter sizing logic in `MainWindow.showEvent` (applies 22/56/22 proportions once).
+3. Assistant panel max width limit removed (min width retained at 300).
+
+### Current Broken State
+
+`_setup_menu` (and earlier for a time `_setup_ui`) lost proper indentation:
+
+```python
+def _setup_menu(self) -> None:
+	"""Set up the menu bar."""  # <-- should be indented under method, but body stays unindented in file now
+	self.logger.info(...)
+	menubar = self.menuBar()
+	# ... etc
+```
+
+Because the docstring and subsequent lines are aligned with the class indentation instead of 8 spaces in, Python expects an indented block and bails early. All following symbol resolutions (`self`, `file_menu`, etc.) then appear as top-level tokens to static analysis, triggering the large error list you see.
+
+### Immediate Fix Plan
+
+1. Open `app/ui/main_window.py` and fully reconstruct these three methods cleanly (copy working structure from a previous backup or recreate):
+   - `_setup_ui`
+   - `_setup_menu`
+   - `_setup_layout`
+2. Ensure each method body is consistently indented (4 spaces under `def`).
+3. Retain only one definition of each method (remove any duplicate / partially patched remnants).
+4. Keep dynamic splitter logic in `showEvent` (already okay) and the assistant panel width adjustments.
+5. Re-run: `poetry run ruff check app/ui/main_window.py` and fix residual style issues.
+6. Run targeted test for UI import sanity: `python - <<'PY'\nfrom app.ui.main_window import MainWindow\nprint('MainWindow import OK')\nPY` (or run the provided startup script) before full test suite.
+7. Only after syntax is green, re-apply (if desired) the string-based shortcuts; they are optional—Qt enum constants could be restored if needed.
+
+### Optional Guard Rails
+
+Add a tiny helper inside `_setup_menu` to DRY action creation (not required now—focus is restoring correctness).
+
+### Verification Checklist After Repair
+
+- [ ] `python -m app.main` launches with 3-column layout (scrollable assistant panel).
+- [ ] Splitter initially sizes ~22/56/22 on first show, user can resize freely.
+- [ ] No max-width clamp on assistant panel; sidebar remains within 220–420.
+- [ ] `ruff` and `mypy` show no new errors beyond pre-existing unrelated warnings.
+- [ ] Import of `MainWindow` succeeds in an isolated Python shell.
+
+### Future Hardening (Post-Fix)
+
+1. Add a minimal unit test that instantiates `MainWindow` headless (using `QT_QPA_PLATFORM=offscreen`) to catch future indentation / structural regressions.
+2. Consider extracting menu construction into `_build_menus()` returning a dict of created actions for easier testing.
+3. Add a regression test for assistant panel scroll area presence (assert there is exactly one outer `QScrollArea`).
+
+### TL;DR
+
+File corruption is purely indentation / structural in `main_window.py`; fix by rewriting the affected methods cleanly. Preserve the new layout enhancements already in place. After that, proceed with tests and documentation updates.
+
+---
+
+_Note left intentionally for next session to avoid re-entering the edit loop._

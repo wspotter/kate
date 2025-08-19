@@ -1,12 +1,11 @@
-"""
-Assistant panel component for Kate LLM Client.
-"""
+"""Assistant panel component for Kate LLM Client."""
 
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, Optional
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,13 +19,14 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core.events import EventBus
+from ...services.assistant_service import AssistantService
 from ...services.rag_evaluation_service import RAGEvaluationService, ResponseEvaluation
+from .simple_voice_widget import SimpleVoiceWidget
 
 
 class AssistantCard(QFrame):
@@ -90,7 +90,7 @@ class AssistantCard(QFrame):
             
             QLabel {
                 color: #ffffff;
-                background-color: transparent;
+                background-color: #404040;
                 border: none;
             }
         """)
@@ -490,67 +490,109 @@ class AssistantPanel(QWidget):
     model_settings_changed = Signal(dict)
     evaluation_details_requested = Signal(object)  # ResponseEvaluation
     
-    def __init__(self, event_bus: EventBus, evaluation_service: Optional[RAGEvaluationService] = None):
+    def __init__(self, event_bus: EventBus, evaluation_service: Optional[RAGEvaluationService] = None, assistant_service: Optional[AssistantService] = None):
         super().__init__()
         self.event_bus = event_bus
         self.evaluation_service = evaluation_service
         self.logger = logger.bind(component="AssistantPanel")
-        
+
+        # Assistant data
         self.assistants: Dict[str, Dict[str, Any]] = {}
         self.current_assistant_id: Optional[str] = None
-        
+        # Use injected AssistantService if provided (shared instance), otherwise create a local one.
+        self.assistant_service = assistant_service or AssistantService()
+
+        # Build UI and load assistants
         self._setup_ui()
         self._connect_signals()
         self._load_assistants()
+
+        # Auto-reload (optional) if environment flag set
+        self._assistants_mtime: Optional[float] = None
+        cfg_path = self.assistant_service.get_config_path()
+        if cfg_path and cfg_path.is_file():
+            try:
+                self._assistants_mtime = cfg_path.stat().st_mtime
+            except OSError:
+                self._assistants_mtime = None
+        if os.environ.get("KATE_WATCH_ASSISTANTS") == "1":  # lazy opt-in
+            self._watch_timer = QTimer(self)
+            self._watch_timer.setInterval(2000)  # 2s
+            self._watch_timer.timeout.connect(self._maybe_auto_reload)
+            self._watch_timer.start()
         
     def _setup_ui(self) -> None:
-        """Set up the assistant panel UI."""
-        layout = QVBoxLayout(self)
+        """Set up the assistant panel UI widgets and layout."""
+        # Top-level layout now holds a single scroll area so the whole panel scrolls
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        main_layout.addWidget(self._scroll_area)
+
+        # Content widget inside scroll area
+        content_widget = QWidget()
+        self._scroll_area.setWidget(content_widget)
+
+        layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(12)
-        
+
         # Title
         title_label = QLabel("Assistant")
-        title_label.setFont(QFont("Arial", 12, QFont.Bold))
+        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(title_label)
-        
-        # Assistant selection dropdown
+
+        # Assistant selection row (combo + reload)
+        combo_row = QHBoxLayout()
         self.assistant_combo = QComboBox()
         self.assistant_combo.setMinimumHeight(36)
-        layout.addWidget(self.assistant_combo)
-        
-        # Current assistant card
+        combo_row.addWidget(self.assistant_combo, 1)
+
+        self.reload_btn = QPushButton("⟳")
+        self.reload_btn.setToolTip("Reload assistants config")
+        self.reload_btn.setFixedWidth(40)
+        combo_row.addWidget(self.reload_btn)
+        layout.addLayout(combo_row)
+
+        # Current assistant card container
         self.current_assistant_frame = QFrame()
         self.current_assistant_layout = QVBoxLayout(self.current_assistant_frame)
         self.current_assistant_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.current_assistant_frame)
-        
-        # Model settings
+
+        # Model settings section
         settings_label = QLabel("Model Settings")
-        settings_label.setFont(QFont("Arial", 11, QFont.Bold))
+        settings_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         layout.addWidget(settings_label)
-        
-        # Settings scroll area
-        settings_scroll = QScrollArea()
-        settings_scroll.setWidgetResizable(True)
-        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
+
+        # Directly add model settings (outer panel already scrollable)
         self.model_settings = ModelSettingsWidget()
-        settings_scroll.setWidget(self.model_settings)
-        
-        layout.addWidget(settings_scroll)
-        
-        # Evaluation metrics section
+        layout.addWidget(self.model_settings)
+
+        # Evaluation section
         eval_label = QLabel("Response Evaluation")
-        eval_label.setFont(QFont("Arial", 11, QFont.Bold))
+        eval_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         layout.addWidget(eval_label)
-        
+
         self.evaluation_widget = EvaluationMetricsWidget()
         layout.addWidget(self.evaluation_widget)
-        
+
+        # Voice Settings section
+        voice_label = QLabel("Voice Settings")
+        voice_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        layout.addWidget(voice_label)
+
+        # Simple voice widget (groovy options)
+        self.voice_settings = SimpleVoiceWidget()
+        layout.addWidget(self.voice_settings)
+
+        # Spacer at end so content packs to top but allows gentle scroll padding
         layout.addStretch()
-        
-        # Apply styling
         self._apply_styling()
         
     def _apply_styling(self) -> None:
@@ -616,54 +658,53 @@ class AssistantPanel(QWidget):
     def _connect_signals(self) -> None:
         """Connect UI signals."""
         self.assistant_combo.currentTextChanged.connect(self._on_assistant_changed)
+        if hasattr(self, 'reload_btn'):
+            self.reload_btn.clicked.connect(self._reload_assistants)
         self.model_settings.settings_changed.connect(self._on_settings_changed)
         self.evaluation_widget.details_button.clicked.connect(self._on_evaluation_details_requested)
+        self.voice_settings.voice_test_requested.connect(self._on_voice_test_requested)
         
     def _load_assistants(self) -> None:
-        """Load available assistants."""
-        # Sample assistants for testing
-        sample_assistants = {
-            "general": {
-                "name": "General Assistant",
-                "description": "A helpful general-purpose AI assistant for various tasks and questions.",
-                "avatar": "🤖",
-                "provider": "openai",
-                "model": "gpt-4"
-            },
-            "coding": {
-                "name": "Code Helper",
-                "description": "Specialized in programming, debugging, and software development assistance.",
-                "avatar": "💻",
-                "provider": "openai", 
-                "model": "gpt-4"
-            },
-            "creative": {
-                "name": "Creative Writer",
-                "description": "Assists with creative writing, storytelling, and content creation.",
-                "avatar": "✍️",
-                "provider": "anthropic",
-                "model": "claude-3-sonnet"
-            },
-            "analyst": {
-                "name": "Data Analyst",
-                "description": "Helps with data analysis, statistics, and research tasks.",
-                "avatar": "📊",
-                "provider": "openai",
-                "model": "gpt-4"
-            }
-        }
-        
-        self.assistants = sample_assistants
-        
-        # Populate combo box
+        """Load assistants via service into UI."""
+        self.assistants = self.assistant_service.get_assistants()
         self.assistant_combo.clear()
-        for assistant_id, assistant_data in self.assistants.items():
-            self.assistant_combo.addItem(assistant_data["name"], assistant_id)
-            
-        # Select first assistant
+        for a_id, data in self.assistants.items():
+            self.assistant_combo.addItem(data["name"], a_id)
         if self.assistants:
-            first_id = list(self.assistants.keys())[0]
-            self._select_assistant(first_id)
+            self._select_assistant(list(self.assistants.keys())[0])
+        self.logger.info(f"AssistantPanel loaded {len(self.assistants)} assistants")
+
+    def _reload_assistants(self) -> None:
+        """Force reload assistants from disk."""
+        try:
+            self.assistants = self.assistant_service.reload()
+            self.assistant_combo.clear()
+            for a_id, data in self.assistants.items():
+                self.assistant_combo.addItem(data["name"], a_id)
+            if self.assistants:
+                self._select_assistant(list(self.assistants.keys())[0])
+            self.logger.info(f"Reloaded assistants; count={len(self.assistants)}")
+        except Exception as e:
+            self.logger.error(f"Assistant reload failed: {e}")
+
+    def reload_assistants(self) -> None:  # public wrapper
+        self._reload_assistants()
+
+    def _maybe_auto_reload(self) -> None:
+        cfg_path = self.assistant_service.get_config_path()
+        if not cfg_path or not cfg_path.is_file():
+            return
+        try:
+            current = cfg_path.stat().st_mtime
+        except OSError:
+            return
+        if self._assistants_mtime is None:
+            self._assistants_mtime = current
+            return
+        if current > self._assistants_mtime:
+            self.logger.info("assistants.json changed on disk; auto reloading")
+            self._assistants_mtime = current
+            self._reload_assistants()
             
     def _select_assistant(self, assistant_id: str) -> None:
         """Select an assistant."""
@@ -681,8 +722,22 @@ class AssistantPanel(QWidget):
                 
         # Update assistant card
         self._update_assistant_card(assistant_data)
-        
-        self.logger.debug(f"Selected assistant: {assistant_id}")
+
+    # --- Indexing status integration (placeholder) ---
+    def update_indexing_status(self, active_tasks: int, queued_tasks: int, current_task: str = "") -> None:
+        """Update UI with current indexing status (placeholder).
+
+        Currently just logs; can be extended to show a badge/progress.
+        """
+        try:
+            if active_tasks or queued_tasks:
+                self.logger.debug(f"Indexing: {active_tasks} active, {queued_tasks} queued - {current_task}")
+            else:
+                self.logger.debug("Indexing idle")
+        except Exception:
+            pass
+
+    # Placeholder removed: real update_evaluation defined earlier in file.
         
     def _update_assistant_card(self, assistant_data: Dict[str, Any]) -> None:
         """Update the current assistant display card."""
@@ -763,3 +818,39 @@ class AssistantPanel(QWidget):
     def set_evaluation_service(self, evaluation_service: RAGEvaluationService) -> None:
         """Set the evaluation service."""
         self.evaluation_service = evaluation_service
+        
+    def _on_voice_test_requested(self, text: str, voice_style: str) -> None:
+        """Handle voice test request from simple voice widget."""
+        self.logger.info(f"🎤 Voice test: '{text[:30]}...' with style '{voice_style}'")
+        
+        try:
+            # Get voice configuration from widget
+            voice_config = self.voice_settings.get_voice_config()
+            
+            # Use pyttsx3 directly for immediate response
+            import pyttsx3
+            engine = pyttsx3.init()
+            
+            # Apply voice style settings
+            engine.setProperty('rate', voice_config['rate'])
+            engine.setProperty('volume', voice_config['volume'])
+            
+            # Get available voices and try to set pitch (if supported)
+            voices = engine.getProperty('voices')
+            if voices:
+                # Try different voices based on style
+                if voice_style == "professional" and len(voices) > 1:
+                    engine.setProperty('voice', voices[1].id if len(voices) > 1 else voices[0].id)
+                else:
+                    engine.setProperty('voice', voices[0].id)
+            
+            # Speak the text
+            engine.say(text)
+            engine.runAndWait()
+            
+            self.logger.info(f"✅ Voice test completed with {voice_style} style")
+            
+        except Exception as e:
+            self.logger.error(f"Voice test failed: {e}")
+            # Fallback notification
+            self.logger.warning("Check that audio output is working on your system")

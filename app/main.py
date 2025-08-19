@@ -17,16 +17,20 @@ from typing import Optional
 
 import click
 from loguru import logger
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
+
+# Async/Qt integration
+try:
+    from qasync import QEventLoop  # type: ignore
+    _has_qasync = True
+except Exception:  # pragma: no cover - fallback if qasync missing
+    _has_qasync = False
 
 # Add the project root to Python path for imports
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.core.application import KateApplication
-from app.core.config import get_settings
 from app.utils.logging import setup_logging
 from app.utils.platform import get_platform_info, setup_platform
 
@@ -48,9 +52,7 @@ def setup_qt_application() -> QApplication:
     logger.info("Qt environment variables set for proper rendering")
     
     # Set application attributes before creating QApplication
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+    # Modern Qt versions scale automatically; legacy attributes removed to avoid deprecation warnings
     
     logger.info("Qt attributes set - High DPI scaling, pixmaps, and OpenGL context sharing enabled")
     
@@ -80,34 +82,58 @@ async def main_async() -> None:
     """
     Main async entry point for the application.
     """
+    kate_app = None
     try:
+        logger.info("🚀 Starting main_async() - platform setup...")
         # Setup platform-specific configurations
         setup_platform()
+        logger.info("✅ Platform setup complete")
         
+        logger.info("🏗️ Initializing KateApplication...")
         # Initialize and start Kate application
         kate_app = KateApplication()
+        logger.info("✅ KateApplication instance created")
+        
+        logger.info("🔧 Starting Kate application startup sequence...")
         await kate_app.startup()
+        logger.info("✅ Kate application startup() completed successfully")
         
         # Setup graceful shutdown handlers
-        def signal_handler(sig, frame):
+        def signal_handler(sig: int, frame: Optional[object]):  # type: ignore[override]
             logger.info(f"Received signal {sig}, initiating shutdown...")
-            asyncio.create_task(kate_app.shutdown())
-        
+            if kate_app:
+                asyncio.create_task(kate_app.shutdown())
+
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+        logger.info("✅ Signal handlers configured")
         
-        # Keep the application running until shutdown
-        while not kate_app.is_shutting_down():
-            await asyncio.sleep(0.1)
-            
-        logger.info("Kate application shutdown complete")
+        logger.info("🎉 Kate application started successfully")
+        logger.info("📱 GUI should be visible")
+        
+        # CRITICAL: Keep the async function alive
+        # The previous version exited immediately after startup, causing qasync loop to terminate
+        # We need to wait indefinitely until shutdown is called
+        # Use the existing _shutdown_event from KateApplication
+        
+        logger.info("⏳ Waiting for application shutdown...")
+        await kate_app.wait_for_shutdown()
+        logger.info("🛑 Shutdown event received, exiting main_async()")
         
     except KeyboardInterrupt:
-        logger.info("Application interrupted by user")
+        logger.info("⚠️ Application interrupted by user")
+        if kate_app:
+            await kate_app.shutdown()
+        raise
     except Exception as e:
-        logger.error(f"Fatal error in Kate application: {e}")
-        logger.exception("Full traceback:")
-        sys.exit(1)
+        logger.error(f"💥 FATAL ERROR in Kate application: {e}")
+        logger.exception("🔍 Full error traceback:")
+        if kate_app:
+            try:
+                await kate_app.shutdown()
+            except Exception as shutdown_error:
+                logger.error(f"Error during emergency shutdown: {shutdown_error}")
+        raise
 
 
 def main() -> None:
@@ -124,36 +150,50 @@ def main() -> None:
         # Setup logging first
         setup_logging()
         logger.info("Starting Kate LLM Client...")
-        
+
         # Log platform information
         platform_info = get_platform_info()
         logger.info(f"Platform: {platform_info}")
-        
-        # Create Qt application
+
+        # Create Qt application (QApplication must exist before QEventLoop)
         qt_app = setup_qt_application()
-        
-        # Create and run the async event loop
-        if sys.platform == "win32":
-            # Use ProactorEventLoop on Windows for better compatibility
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
-        # Start the async main function
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Setup Qt integration with asyncio
-        timer = QTimer()
-        timer.timeout.connect(lambda: None)  # Keep the Qt event loop active
-        timer.start(10)  # 10ms intervals
-        
-        try:
-            # Run the main async function
+
+        if not _has_qasync:
+            logger.error(
+                "qasync dependency missing – install it or adjust event loop integration. "
+                "Falling back to basic exec(), asyncio tasks may not run."
+            )
+            # Basic (non-async integrated) fallback: run startup then exec()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             loop.run_until_complete(main_async())
+            qt_app.exec()  # Blocking Qt loop; shutdown via window close
+            return
+
+        # Use qasync to integrate Qt + asyncio so the UI repaints correctly
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+        qloop = QEventLoop(qt_app)
+        asyncio.set_event_loop(qloop)
+        logger.info("Starting integrated Qt/asyncio event loop (qasync)")
+
+        try:
+            qloop.run_until_complete(main_async())
+        except RuntimeError as e:
+            # When the main window closes, Qt can stop the loop before
+            # main_async completes its await, raising this benign error.
+            if "Event loop stopped before Future completed" in str(e):
+                logger.info("Event loop stopped after window close; treating as normal shutdown")
+            else:
+                raise
         finally:
-            # Cleanup
-            timer.stop()
-            loop.close()
-            qt_app.quit()
+            # Ensure graceful quit
+            if qt_app is not None:
+                try:
+                    qt_app.quit()
+                except Exception:
+                    pass
             
     except Exception as e:
         logger.error(f"Fatal error: {e}")

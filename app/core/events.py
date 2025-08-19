@@ -5,9 +5,22 @@ Provides a type-safe event bus for decoupled communication between components.
 """
 
 import asyncio
-from typing import Any, Callable, Dict, List, Type, TypeVar, Optional
+from abc import ABC
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Type,
+    TypeVar,
+    cast,
+)
+
 from loguru import logger
 
 # Event type variable for type safety
@@ -156,13 +169,17 @@ class EventBus:
     
     Supports both synchronous and asynchronous event handlers.
     """
+
+    _handlers: Dict[Type[Event], List[Callable[[Event], None]]]
+    _async_handlers: Dict[Type[Event], List[Callable[[Event], Awaitable[Any]]]]
+    logger: Any
     
     def __init__(self):
-        self._handlers: Dict[Type[Event], List[Callable]] = {}
-        self._async_handlers: Dict[Type[Event], List[Callable]] = {}
+        self._handlers = {}
+        self._async_handlers = {}
         self.logger = logger.bind(component="EventBus")
         
-    def subscribe(self, event_type: Type[EventType], handler: Callable[[EventType], None]) -> None:
+    def subscribe(self, event_type: Type[Event], handler: Callable[[Event], None]) -> None:
         """
         Subscribe to an event type with a synchronous handler.
         
@@ -175,7 +192,7 @@ class EventBus:
         self._handlers[event_type].append(handler)
         self.logger.debug(f"Subscribed sync handler for {event_type.__name__}")
         
-    def subscribe_async(self, event_type: Type[EventType], handler: Callable[[EventType], None]) -> None:
+    def subscribe_async(self, event_type: Type[Event], handler: Callable[[Event], Awaitable[Any]]) -> None:
         """
         Subscribe to an event type with an asynchronous handler.
         
@@ -185,11 +202,10 @@ class EventBus:
         """
         if event_type not in self._async_handlers:
             self._async_handlers[event_type] = []
-        self._async_handlers[event_type] = []
         self._async_handlers[event_type].append(handler)
         self.logger.debug(f"Subscribed async handler for {event_type.__name__}")
         
-    def unsubscribe(self, event_type: Type[EventType], handler: Callable) -> None:
+    def unsubscribe(self, event_type: Type[Event], handler: Callable[[Event], Any]) -> None:
         """
         Unsubscribe a handler from an event type.
         
@@ -246,18 +262,17 @@ class EventBus:
         
         # Call asynchronous handlers
         if event_type in self._async_handlers:
-            tasks = []
+            tasks: List[asyncio.Task[Any]] = []
             for handler in self._async_handlers[event_type]:
                 try:
-                    tasks.append(asyncio.create_task(handler(event)))
+                    coro = handler(event)
+                    # Ensure we pass a proper coroutine to create_task
+                    task = asyncio.create_task(cast(Coroutine[Any, Any, Any], coro))
+                    tasks.append(task)
                 except Exception as e:
                     self.logger.error(f"Error creating task for async event handler for {event_type.__name__}: {e}")
-                    
             if tasks:
-                try:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                except Exception as e:
-                    self.logger.error(f"Error in async event handlers for {event_type.__name__}: {e}")
+                await asyncio.gather(*tasks, return_exceptions=True)
                     
     def clear_handlers(self) -> None:
         """Clear all event handlers."""
@@ -286,7 +301,7 @@ class EventBus:
         Returns:
             List of event types
         """
-        event_types = set()
+        event_types: Set[Type[Event]] = set()
         event_types.update(self._handlers.keys())
         event_types.update(self._async_handlers.keys())
         return list(event_types)

@@ -1,116 +1,66 @@
 # Kate LLM Desktop Client - Debugging Status Notes
 
-## Current Status (2025-08-17 17:42 UTC)
+## Current Status (2025-08-18 14:05 UTC)
 
-### ✅ ISSUES RESOLVED:
+Recovery cycle successful: application launches, renders, and shuts down cleanly (loop stop handled). Previous hanging & screenshot rendering hypotheses superseded by confirmed good launch with updated event loop & deferred heavy imports.
 
-1. **Import Hanging Issue** - Kate was hanging during startup due to blocking ML dependency imports
-   - Fixed: Made EmbeddingService imports optional with lazy loading
-   - Fixed: Removed blocking imports from critical startup path
-   - Result: Kate now starts successfully and loads all services
+### ✅ Resolved Since Prior Notes
 
-### 🔍 CURRENT ISSUE:
+1. Startup Hang: Eliminated by lazy-loading heavy ML imports & qasync integration.
+2. Shutdown RuntimeError: Caught benign "Event loop stopped before Future completed" and suppressed.
+3. Timezone Warnings: Replaced naive `datetime.utcnow()` with `now_utc()` helper across models & embedding shim.
 
-**Qt Widget Rendering Problem (Environmental - Not Code Issue)**
+### ℹ️ Clarified / Obsolete Items
 
-- **Symptom**: Kate window shows screenshot/cutout of VSCode instead of proper GUI widgets
-- **Root Cause**: Remote desktop X11 forwarding cannot properly composite complex Qt widget hierarchies
-- **Evidence**:
-  - Basic Qt test works (simple widgets render)
-  - Kate initializes completely (all logs show success)
-  - Complex nested widgets fail to composite over remote desktop
+- Old assumption of remote desktop compositing issue no longer blocking; UI confirmed healthy.
+- January-era PySide6 installation blockers obsolete; environment stable.
+- Screenshot artifact issue not reproducible after refactor (removed from active risk list).
 
-### 📋 WHAT TO TEST WHEN WORKING LOCALLY:
+### Active Focus
 
-When you work directly on the server (not via remote desktop):
+| Area                 | Status             | Action                                       |
+| -------------------- | ------------------ | -------------------------------------------- |
+| Full Test Suite      | Pending            | Run all pytest & log failures                |
+| Database CRUD/Search | Partially tested   | Execute async manager tests                  |
+| Web Server Smoke     | Pending            | Start server, GET health, WS connect         |
+| RAG Pipeline         | Untested this pass | Plan minimal doc→chunk→embed→retrieve test   |
+| Alias Strategy       | Implemented        | Add regression test & plan property refactor |
 
-1. **Run Kate directly**: `cd /home/stacy/Desktop/kate && poetry run python -m app.main`
-2. **Expected Result**: Should see proper 3-column GUI layout with:
-   - Left: Conversation sidebar
-   - Center: Chat area
-   - Right: Assistant panel
-3. **If still shows screenshots locally**: There may be additional Qt compositing issues to debug
+### Key Modified Files (Recent Cycle)
 
-### 🛠️ KEY FILES MODIFIED:
+- `app/database/models.py` (timezone defaults, legacy aliases, auto doc hash)
+- `app/main.py` (qasync integration, graceful shutdown)
+- `app/web_server.py` (restored minimal FastAPI server earlier)
+- `app/core/config.py` (legacy fields + extras allowance)
 
-- `app/services/embedding_service.py` - Made ML imports optional
-- `app/core/application.py` - Added lazy service initialization
-- `app/ui/main_window.py` - Removed blocking imports from UI setup
-- `test_qt_basic.py` - Created Qt diagnostic test (KEEP THIS)
-
-### 🏗️ KATE ARCHITECTURE CONFIRMED WORKING:
-
-- ✅ 55 Python files load successfully
-- ✅ Database initialization (SQLAlchemy 2.0)
-- ✅ Theme system (Kate Dark theme)
-- ✅ ML services (embedding, RAG evaluation)
-- ✅ Search service
-- ✅ Event-driven architecture (EventBus)
-- ✅ Multi-modal capabilities (vision, audio, code analysis)
-
-### 📝 IMPORTANT NOTES:
-
-- Kate is a fully functional, sophisticated AI desktop application
-- All code issues have been resolved
-- Current "screenshot" problem is environmental (remote desktop limitation)
-- When working locally, Kate should render properly
-- If local rendering still fails, may need to investigate Qt platform plugins or compositor settings
-
-### 🔧 DIAGNOSTIC COMMANDS TO REMEMBER:
-
-### 🔧 QT ENVIRONMENT FIXES APPLIED:
-
-**In `app/main.py` lines 44-48:**
-
-```python
-# Set Qt environment variables for proper rendering
-os.environ['QT_QPA_PLATFORMTHEME'] = 'qt5ct'
-os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
-os.environ['QT_SCALE_FACTOR'] = '1'
-os.environ['QT_SCREEN_SCALE_FACTORS'] = '1'
-```
-
-**Manual testing script created:** `test_kate_with_qt_env.sh`
-
-### 🔧 DIAGNOSTIC COMMANDS TO REMEMBER:
+### Diagnostic Commands (Retained Reference)
 
 ```bash
-# Test basic Qt functionality
-poetry run python test_qt_basic.py
-
-# Test with Qt environment variables
-export QT_QPA_PLATFORMTHEME=qt5ct && poetry run python test_qt_basic.py
-
-# Run Kate with full logging
+# Launch GUI
 poetry run python -m app.main
 
-# Run Kate with explicit platform plugin
-poetry run python -m app.main -platform xcb
+# Run full tests (to be executed next session)
+poetry run pytest -q
 
-# Check Qt platform information
-python -c "from PySide6.QtWidgets import QApplication; import sys; app = QApplication(sys.argv); print(app.platformName())"
+# Web server quick check
+poetry run python app/web_server.py & sleep 2; curl -f http://127.0.0.1:8000/health
 ```
 
-### 🚨 CURRENT ISSUE (After Environment Fixes):
+### Remaining Technical Debts
 
-**Kate still hangs during startup even with Qt environment variables set**
+- Dynamic attribute aliasing (convert to `@property` / explicit fields)
+- Health check framework for services
+- RAG dependency optionalization matrix documentation
+- Consolidated settings UI (deferred)
 
-- Basic Qt test works fine with environment variables
-- Kate with environment fixes still times out (5+ seconds)
-- This suggests additional blocking components in Kate's UI initialization beyond environment issues
+### Immediate Next Steps
 
-### 🎯 NEXT STEPS FOR LOCAL TESTING:
+1. Run entire pytest suite
+2. Address failures (prioritize database + service integration)
+3. Smoke test web server endpoints
+4. Draft regression test for alias layer
+5. Update docs (status, production plan, debugging) ✅ (this file updated)
 
-1. **Test Kate locally on server** (not via remote desktop) to see if environment fixes resolve rendering
-2. **If Kate still hangs locally**, investigate remaining blocking components:
-   - Complex UI component initialization (ConversationSidebar, ChatArea, AssistantPanel)
-   - Evaluation service setup during UI initialization
-   - Theme system initialization
-3. **If Kate shows proper GUI locally**, the Qt environment fixes were successful
+---
 
-### 📊 SUCCESS CRITERIA:
-
-- **Local display**: Kate should show 3-column layout with proper Qt widgets (not screenshots)
-- **Remote desktop**: May still show screenshot content due to X11 forwarding limitations
-
-**Status**: Kate debugging advanced - import issues resolved, Qt environment fixes applied, but startup hanging persists. Requires local testing to validate fixes.
+Status: Core stable | Validation expansion pending | Docs aligned (Aug 18 2025)

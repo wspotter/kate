@@ -4,18 +4,51 @@
 
 Kate is a modern desktop LLM client built with Python and PySide6, designed to replace the Electron-based "Augie-fresh" codebase. The application features a modern 3-column UI similar to Cherry Studio and supports multiple LLM providers with advanced features.
 
-## Current Status: RESTORATION IN PROGRESS
+## Current Status (Aug 18 2025): Stabilized Post-Recovery
 
-**CRITICAL**: Project files were lost and are being restored from chat session. The application previously had:
-- ✅ Complete 24-component architecture implemented
-- ✅ Modern 3-column UI working (Sidebar | Chat | Assistant Panel)
-- ✅ Database initialization successful
-- ✅ Theme system functional
-- ⚠️ Final UI constructor parameter issues being resolved
+Emergency restoration phase completed. Application launches cleanly with async Qt (qasync), database models validated via targeted tests, and legacy compatibility layer ensures older tests & configs continue to work. Remaining focus shifts to full-suite validation, RAG pipeline re-verification, and progressive refactor of temporary alias shims.
+
+Refer to `docs/adr/ADR-0001-timezone-alias-strategy.md` for the formal record covering timezone policy and alias shims.
+
+### Addendum: Recovery Technical Adjustments
+
+| Area           | Adjustment                               | Rationale                                              |
+| -------------- | ---------------------------------------- | ------------------------------------------------------ |
+| Event Loop     | Integrated `qasync`                      | Async providers & DB ops without blocking UI           |
+| Time Handling  | Introduced `now_utc()`                   | Eliminate naive datetime warnings & ensure consistency |
+| Legacy Fields  | Dynamic alias shims (models & settings)  | Maintain test pass without immediate schema migration  |
+| Shutdown       | Graceful suppression of benign loop-stop | Prevent misleading fatal error noise                   |
+| Document Model | Auto hash + word count on init           | Deterministic metadata & test stability                |
+| Web Server     | Minimal FastAPI health + WS restored     | Enables lightweight API / remote control               |
+
+These adjustments MUST remain until explicit migration & deprecation plan is executed.
+
+## Legacy Compatibility Layer
+
+During recovery, prior test suites referenced attributes not present in refactored models/settings. To bridge:
+
+1. Model constructors (`Document`, `Conversation`, `Message`, `DocumentChunk`) inject legacy attribute names when omitted.
+2. A lightweight non-ORM `Embedding` shim emulates prior structure for tests.
+3. Settings model (`config.py`) permits extra fields and carries legacy flat attributes.
+
+Refactor Path:
+
+- Introduce explicit fields for any still-used aliases.
+- Add regression tests verifying both legacy + canonical names.
+- Issue deprecation notice (comment) before removal.
+
+## Timezone & Timestamp Policy
+
+All timestamps are timezone-aware UTC; use the shared `now_utc()` helper. Never call `datetime.utcnow()` directly. This ensures consistency across DB records, tests, and potential cross-system synchronization.
+
+## Optional Dependency Degradation
+
+Heavy or optional stacks (e.g., transformers, chromadb, voice libs) must not block core chat UI. Guard imports and log a single warning when disabling optional features.
 
 ## Architecture Overview
 
 ### Core Framework
+
 ```
 Kate LLM Client
 ├── Core Application (KateApplication)
@@ -28,6 +61,7 @@ Kate LLM Client
 ```
 
 ### UI Layout - 3-Column Design
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Menu Bar & Toolbar                                          │
@@ -48,6 +82,7 @@ Kate LLM Client
 ## 24-Component Implementation Roadmap
 
 ### Phase 1: Foundation (✅ COMPLETED)
+
 1. **Project Structure** - Poetry, pyproject.toml, modern Python tooling
 2. **Core Application** - KateApplication class, PySide6 main window
 3. **Configuration** - Pydantic-based settings with hot-reload
@@ -55,6 +90,7 @@ Kate LLM Client
 5. **Event System** - Type-safe EventBus for component communication
 
 ### Phase 2: LLM Integration (✅ COMPLETED)
+
 6. **Base Provider** - BaseLLMProvider interface, OpenAI implementation
 7. **Data Models** - Pydantic models for conversations, messages, responses
 8. **UI Components** - Modern chat UI with MessageBubble widgets
@@ -62,6 +98,7 @@ Kate LLM Client
 10. **Multi-Provider** - Anthropic, Ollama providers with error handling
 
 ### Phase 3: Advanced Features (✅ COMPLETED)
+
 11. **Provider Manager** - Health monitoring, model discovery, connection pooling
 12. **Assistant System** - Persona management and prompt templates
 13. **Extended Providers** - Gemini, Groq, Cohere, Mistral integrations
@@ -69,6 +106,7 @@ Kate LLM Client
 15. **MCP Client** - JSON-RPC protocol, tool discovery, UI integration
 
 ### Phase 4: Enterprise Features (✅ COMPLETED)
+
 16. **Plugin Architecture** - Plugin interface, security validation
 17. **Voice Processing** - Speech recognition, TTS, async audio handling
 18. **Theme System** - Qt stylesheets, dark/light modes, custom themes
@@ -76,6 +114,7 @@ Kate LLM Client
 20. **Translation** - LLM-powered translation, multi-language UI
 
 ### Phase 5: Distribution & Quality (✅ COMPLETED)
+
 21. **Build System** - PyInstaller configuration, resource bundling
 22. **Update Manager** - Secure auto-update, signature verification
 23. **Testing Suite** - Comprehensive pytest with async testing, UI automation
@@ -84,6 +123,7 @@ Kate LLM Client
 ## Current Technical State
 
 ### ✅ Successfully Implemented
+
 - **Core Application Framework**: KateApplication with async lifecycle
 - **Database System**: SQLAlchemy 2.0 with async operations, all models working
 - **Configuration**: Pydantic v2 with `pydantic-settings` integration
@@ -92,37 +132,46 @@ Kate LLM Client
 - **LLM Providers**: Base provider interface with multiple implementations
 - **UI Architecture**: 3-column layout with PySide6 components
 
-### ⚠️ Currently Fixing
-- **UI Constructor Issues**: MainWindow parameter mismatches (theme_manager, search_service)
-- **UpdateManager**: Constructor parameter alignment with event_bus only
-- **Final Launch**: Resolving last compatibility issues for successful startup
+### ⚠️ Pending / In Progress
 
-### 🎯 Immediate Next Steps
-1. **Complete File Restoration**: Restore all missing project files from chat session
-2. **Fix Constructor Issues**: Align all component constructors for proper initialization
-3. **Test Complete Launch**: Achieve `poetry run python app/main.py` success
-4. **Validate UI**: Ensure 3-column layout renders and functions correctly
-5. **Connect LLM**: Replace placeholder responses with real provider integration
+- **Full Test Suite Execution**: Only model creation subset run so far
+- **RAG Pipeline Smoke Test**: Document → chunk → embed → retrieve path unverified this cycle
+- **Alias Refactor**: Dynamic legacy attribute shims planned to convert to explicit fields or properties
+- **Settings Consolidation**: Centralized settings UI postponed
+- **Service Health Checks**: Not yet implemented
+
+### 🎯 Immediate Next Steps (Current Cycle)
+
+1. Run full pytest suite & catalog failures
+2. Add regression test for legacy alias layer
+3. Smoke test web server (HTTP + WebSocket)
+4. Perform minimal RAG pipeline validation (conditional on dependencies)
+5. Draft health check scaffold for core services
+6. Introduce explicit properties to begin alias deprecation path (non-breaking)
 
 ## Key Technical Decisions
 
 ### Database: SQLAlchemy 2.0 Async
+
 - **Models**: Conversation, Message, Assistant, FileAttachment
 - **Migration**: Renamed `metadata` columns to `extra_data` (reserved name conflict)
 - **Connection**: SQLite with aiosqlite for development, PostgreSQL-ready
 
 ### UI Framework: PySide6 (Qt6)
+
 - **Layout**: QSplitter-based 3-column responsive design
 - **Components**: Custom widgets for chat bubbles, conversation sidebar
 - **Theming**: CSS-like Qt stylesheets with dark/light mode support
 
 ### Architecture Patterns
+
 - **Event-Driven**: Decoupled components via EventBus
 - **Async-First**: All I/O operations use async/await patterns
 - **Type-Safe**: Pydantic models with full type annotation
 - **Plugin System**: Dynamic loading with security validation
 
 ## File Structure (To Be Restored)
+
 ```
 kate/
 ├── pyproject.toml                 # Project configuration
@@ -159,19 +208,26 @@ kate/
 
 ## Success Criteria
 
-### Immediate (Restoration Phase)
-- [ ] All project files restored and accessible
-- [ ] `poetry install` completes successfully
-- [ ] `poetry run python app/main.py` launches without errors
-- [ ] 3-column UI displays correctly with all panels functional
+### Current Cycle (Stabilization)
+
+- [x] Application launches without errors
+- [x] Targeted database model tests pass
+- [x] Timezone-aware timestamps implemented
+- [x] qasync integrated for async GUI
+- [ ] Full test suite green / annotated
+- [ ] RAG pipeline smoke test executed
+- [ ] Web server endpoints verified
+- [ ] Alias regression test added
 
 ### Short-term (Functional Phase)
+
 - [ ] Real LLM provider integration working
 - [ ] Conversation persistence and loading
 - [ ] Theme switching functional
 - [ ] Basic chat functionality end-to-end
 
 ### Long-term (Feature Complete)
+
 - [ ] All 24 components fully integrated and tested
 - [ ] Plugin system operational
 - [ ] Advanced features (voice, document processing, etc.)
@@ -180,12 +236,14 @@ kate/
 ## Risk Mitigation
 
 ### File Loss Prevention
+
 - Immediate Git repository initialization
 - Regular commits during restoration
 - Backup to GitHub repository
 - Local backup creation
 
 ### Timeline Considerations
+
 - Focus on core functionality first
 - Defer advanced features until base is stable
 - Prioritize UI functionality over feature completeness
@@ -193,6 +251,6 @@ kate/
 
 ---
 
-**Last Updated**: August 16, 2025 - Restoration Phase
-**Status**: Files being restored from chat session, 3-column UI architecture preserved
-**Priority**: Complete file restoration and achieve successful application launch
+**Last Updated**: August 18, 2025 - Post-Recovery Stabilization
+**Status**: Core stable; validation & RAG re-verification pending
+**Priority**: Expand tests, confirm pipeline, reduce interim shims

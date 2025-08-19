@@ -7,22 +7,23 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QFont, QKeySequence, QTextCursor
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QApplication,
+    # QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
+    # QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core.events import EventBus
-from ...services.rag_evaluation_service import RAGEvaluationService, ResponseEvaluation
+from ...providers.base import ChatCompletionRequest, ChatMessage
+from ...services.rag_evaluation_service import RAGEvaluationService
 from .message_bubble import MessageBubble, StreamingMessageBubble
 
 
@@ -249,19 +250,23 @@ class ChatArea(QWidget):
         self.current_conversation_id: Optional[str] = None
         self.messages: List[MessageBubble] = []
         self.current_streaming_message: Optional[StreamingMessageBubble] = None
-        
+        # Assistant & model settings
+        self.active_assistant_id: Optional[str] = None
+        self.assistant_system_prompt: Optional[str] = None
+        self.model_settings: Dict[str, Any] = {"temperature": 0.7, "stream": False}
+
         # RAG worker and thread
         self.rag_worker = None
         self.rag_thread = None
-        
+
         self.setAcceptDrops(True)
         self._setup_ui()
         self._connect_signals()
-        
+
         # Initialize RAG worker if service is available
         if self.rag_integration_service:
             self._setup_rag_worker()
-        
+
         # Add drop overlay
         self.drop_overlay = DropOverlay(self)
         
@@ -355,22 +360,148 @@ class ChatArea(QWidget):
         
     def _handle_message_sent(self, message: str) -> None:
         """Handle message sent from input area."""
+        # Auto-create a default conversation if none selected
         if not self.current_conversation_id:
-            self.logger.warning("No conversation selected")
-            return
-            
+            self.load_conversation("default")
+        
         # Add user message to chat
         self.add_message("user", message)
         
         # Emit signal for external handling
         self.message_sent.emit(message)
         
-        # Process with RAG if available
+        # Prefer RAG if configured
         if self.rag_integration_service and self.rag_worker:
             self._process_with_rag(message)
+            return
+        
+        # Otherwise try Ollama provider through application reference (walk parent chain)
+        app_ref = self._get_application()
+        if app_ref and getattr(app_ref, "ollama_provider", None) and app_ref.ollama_provider.is_connected and app_ref.selected_model:
+            asyncio.create_task(self._ollama_chat(message, app_ref))
         else:
-            # Fallback to placeholder response
             self._add_placeholder_response()
+
+    def _get_application(self):
+        """Attempt to access the KateApplication instance via parent widgets."""
+        p = self.parent()
+        depth = 0
+        while p and depth < 10:
+            if hasattr(p, "app") and getattr(p, "app", None):  # MainWindow holds app
+                return getattr(p, "app")
+            p = p.parent()
+            depth += 1
+        return None
+
+    async def _ollama_chat(self, user_text: str, app_ref) -> None:
+        """Send message to Ollama provider (non-streaming fallback for reliability)."""
+        provider = app_ref.ollama_provider
+        model = app_ref.selected_model
+        if not provider or not model:
+            self._add_placeholder_response()
+            return
+        try:
+            self.set_loading(True)
+            # Build conversation messages (simple: user only for now; could retain history later)
+            system_prompt = self.assistant_system_prompt or "You are a helpful local AI."
+            chat_messages = [
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=user_text),
+            ]
+            # Direct non-streaming request
+            request = ChatCompletionRequest(
+                model=model,
+                messages=chat_messages,
+                stream=self.model_settings.get("stream", False),
+                temperature=self.model_settings.get("temperature", 0.7),
+                max_tokens=self.model_settings.get("max_tokens"),
+                top_p=self.model_settings.get("top_p", 1.0),
+                frequency_penalty=self.model_settings.get("frequency_penalty", 0.0),
+                presence_penalty=self.model_settings.get("presence_penalty", 0.0)
+            )
+            import time
+            start_t = time.time()
+            resp = await provider.chat_completion(request)
+            elapsed = time.time() - start_t
+            content = resp.choices[0]["message"]["content"] if resp.choices else "<no content>"
+            # Create stub evaluation metrics if evaluation service exists
+            eval_obj = None
+            try:
+                from datetime import datetime
+
+                from ...services.rag_evaluation_service import (
+                    ResponseEvaluation,
+                    RetrievalContext,
+                )
+                eval_obj = ResponseEvaluation(
+                    evaluation_id=str(int(start_t * 1000)),
+                    timestamp=datetime.now(),
+                    query=user_text,
+                    response=content,
+                    retrieval_context=RetrievalContext(
+                        document_chunks=[],
+                        similarity_scores=[],
+                        retrieval_query=user_text,
+                        total_retrieved=0,
+                        retrieval_time=0.0,
+                    ),
+                    relevance_score=0.5,
+                    coherence_score=0.5,
+                    completeness_score=0.5,
+                    citation_accuracy=0.0,
+                    answer_quality=0.5,
+                    factual_accuracy=0.5,
+                    response_time=elapsed,
+                    overall_score=0.5,
+                    confidence_score=0.5,
+                )
+            except Exception as ee:
+                self.logger.debug(f"Could not build evaluation stub: {ee}")
+
+            # Pass a simplified dict for bubble evaluation display
+            eval_dict = None
+            if eval_obj:
+                eval_dict = {
+                    "overall_score": eval_obj.overall_score,
+                    "relevance_score": eval_obj.relevance_score,
+                    "coherence_score": eval_obj.coherence_score,
+                    "completeness_score": eval_obj.completeness_score,
+                }
+            self.add_message("assistant", content, evaluation_data=eval_dict)
+            if eval_obj:
+                # Emit full evaluation object for panel/dashboard
+                self.evaluation_received.emit(eval_obj)
+        except Exception as e:
+            self.logger.error(f"Ollama chat failed: {e}")
+            self.add_message("assistant", f"Error contacting Ollama: {e}")
+        finally:
+            self.set_loading(False)
+
+    def set_assistant(self, assistant_id: str, assistant_data: Dict[str, Any]) -> None:
+        """Configure active assistant (updates system prompt)."""
+        self.active_assistant_id = assistant_id
+        # Use description as system prompt base
+        system_prompt = assistant_data.get("system_prompt")
+        if not system_prompt:
+            desc = assistant_data.get("description") or assistant_data.get("name") or "Assistant"
+            system_prompt = f"You are '{assistant_data.get('name', 'Assistant')}'. {desc}"
+        self.assistant_system_prompt = system_prompt
+        # Adjust temperature heuristics per assistant role
+        role_temps = {
+            'creative': 0.9,
+            'coding': 0.55,
+            'data': 0.45,
+            'research': 0.6,
+            'general': 0.7
+        }
+        if assistant_id in role_temps:
+            self.model_settings['temperature'] = role_temps[assistant_id]
+        self.logger.debug(f"Assistant context set: {assistant_id}")
+
+    def set_model_settings(self, settings: Dict[str, Any]) -> None:
+        """Update chat model parameter settings."""
+        self.model_settings.update(settings)
+        self.logger.debug(f"Model settings updated in chat area: {self.model_settings}")
         
     def _process_with_rag(self, message: str) -> None:
         """Process message with RAG integration."""
@@ -643,9 +774,10 @@ class DropOverlay(QWidget):
     """Overlay for showing drag-and-drop feedback."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setAutoFillBackground(True)
         self.setStyleSheet("""
-            background-color: rgba(0, 120, 212, 0.7);
+            background-color: rgba(0, 120, 212, 180);
             border-radius: 12px;
         """)
         

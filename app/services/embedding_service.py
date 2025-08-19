@@ -16,14 +16,26 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 from loguru import logger
 
-# Make sentence_transformers import optional to avoid startup hanging
-try:
-    from sentence_transformers import SentenceTransformer
-    HAS_SENTENCE_TRANSFORMERS = True
-except ImportError:
-    logger.warning("sentence_transformers not available - embedding service will use mock implementation")
-    SentenceTransformer = None
-    HAS_SENTENCE_TRANSFORMERS = False
+# Lazy import flag - will be set when first attempting to import
+HAS_SENTENCE_TRANSFORMERS = None
+SentenceTransformer = None
+
+def _lazy_import_sentence_transformers():
+    """Lazy import sentence_transformers only when needed."""
+    global HAS_SENTENCE_TRANSFORMERS, SentenceTransformer
+    
+    if HAS_SENTENCE_TRANSFORMERS is None:
+        try:
+            from sentence_transformers import SentenceTransformer as ST
+            SentenceTransformer = ST
+            HAS_SENTENCE_TRANSFORMERS = True
+            logger.info("sentence_transformers imported successfully")
+        except ImportError as e:
+            logger.warning(f"sentence_transformers not available - will use mock implementation: {e}")
+            SentenceTransformer = None
+            HAS_SENTENCE_TRANSFORMERS = False
+    
+    return HAS_SENTENCE_TRANSFORMERS
 
 from ..core.events import EventBus
 from ..database.manager import DatabaseManager

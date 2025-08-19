@@ -13,10 +13,27 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from loguru import logger
-from sentence_transformers import SentenceTransformer
 
 from ..database.models import Document, DocumentChunk
 from .embedding_service import EmbeddingService
+
+# Lazy import to avoid hanging during startup
+_SentenceTransformer = None
+
+def _lazy_import_sentence_transformer():
+    """Lazy import SentenceTransformer only when needed."""
+    global _SentenceTransformer
+    
+    if _SentenceTransformer is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            _SentenceTransformer = SentenceTransformer
+            logger.info("SentenceTransformer imported successfully for evaluation")
+        except ImportError as e:
+            logger.warning(f"SentenceTransformer not available for evaluation: {e}")
+            _SentenceTransformer = False
+    
+    return _SentenceTransformer
 
 
 class EvaluationMetric(Enum):
@@ -133,8 +150,23 @@ class RAGEvaluationService:
         }
         
         # Load evaluation model (lightweight for real-time evaluation)
+        
+    async def _ensure_model_loaded(self) -> None:
+        """Ensure the evaluation model is loaded."""
+        if not self._model_loaded:
+            SentenceTransformer = _lazy_import_sentence_transformer()
+            if SentenceTransformer and SentenceTransformer is not False:
+                try:
+                    
+                    self.logger.info("Evaluation model loaded successfully")
+                except Exception as e:
+                    self.logger.warning(f"Could not load evaluation model: {e}")
+                    self.evaluation_model = None
+            else:
+                self.evaluation_model = None
+            self._model_loaded = True
         try:
-            self.evaluation_model = SentenceTransformer('all-MiniLM-L6-v2')
+            
             self.logger.info("Evaluation model loaded successfully")
         except Exception as e:
             self.logger.warning(f"Could not load evaluation model: {e}")

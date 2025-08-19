@@ -2,19 +2,18 @@
 Main window for Kate LLM Client with 3-column layout.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, cast
 
 from loguru import logger
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import (  # noqa: F401 (reserved for future window icon usage)
+    QAction,
+    QIcon,
+)
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
-    QSizePolicy,
     QSplitter,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -24,6 +23,7 @@ from .components.assistant_panel import AssistantPanel
 from .components.chat_area import ChatArea
 from .components.conversation_sidebar import ConversationSidebar
 from .components.evaluation_dashboard import EvaluationDashboard
+from .components.settings_window import SettingsWindow
 from .components.status_bar import StatusBar
 
 if TYPE_CHECKING:
@@ -43,101 +43,174 @@ class MainWindow(QMainWindow):
     # Signals
     closing = Signal()
     
+    # Attribute type declarations (for mypy clarity)
+    app: KateApplication
+    settings: AppSettings
+    event_bus: EventBus
+    logger: Any
+    evaluation_service: Any
+    evaluation_dashboard: Optional[EvaluationDashboard]
+    central_widget: QWidget
+    main_layout: QHBoxLayout
+    main_splitter: QSplitter
+    conversation_sidebar: ConversationSidebar
+    chat_area: ChatArea
+    assistant_panel: AssistantPanel
+    status_bar: StatusBar
+    settings_window: Optional[SettingsWindow]
+
     def __init__(self, app: KateApplication, settings: AppSettings, event_bus: EventBus):
         super().__init__()
         self.app = app
         self.settings = settings
         self.event_bus = event_bus
         self.logger = logger.bind(component="MainWindow")
-        
-        # Initialize evaluation service
-        self.evaluation_service = None
+
+        # Initialize evaluation service (assigned later to concrete service)
+        self.evaluation_service = None  # type: ignore[assignment]
         self.evaluation_dashboard = None
-        
+        self.settings_window = None
+
         # Initialize UI components
         self._setup_ui()
+        self._setup_menu()
         self._setup_layout()
         self._connect_signals()
         self._setup_evaluation_service()
-        
+
         # Apply theme
         self._apply_theme()
-        
+
         self.logger.info("Main window initialized with 3-column layout and evaluation integration")
-        
+
         # Add a timer to check widget visibility after a short delay
         QTimer.singleShot(1000, self._verify_widget_display)
         
     def _setup_ui(self) -> None:
         """Set up the main window UI."""
         self.logger.info("Setting up main window UI...")
-        
         # Window properties
         self.setWindowTitle("Kate - LLM Desktop Client")
-        self.setMinimumSize(1200, 800)
-        self.resize(1400, 900)
+        self.setMinimumSize(1100, 760)
+        self.resize(1480, 900)
         self.logger.info("Window properties set - title, minimum size, and resize")
-        
-        # Set window icon
+
+        # Set window icon (placeholder)
         # self.setWindowIcon(QIcon(":/icons/kate.png"))  # TODO: Add icon
-        
         # Create central widget
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.logger.info("Central widget created and set")
-        
+
         # Create main layout
         self.main_layout = QHBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         self.logger.info("Main horizontal layout created with zero margins and spacing")
+    
+    def _setup_menu(self) -> None:
+        """Set up the menu bar."""
+        self.logger.info("Setting up menu bar...")
+
+        menubar = self.menuBar()
+
+        # File menu
+        file_menu = menubar.addMenu("&File")
+        new_conversation_action = QAction("&New Conversation", self)
+        new_conversation_action.setShortcut("Ctrl+N")
+        new_conversation_action.triggered.connect(self.create_new_conversation)
+        file_menu.addAction(new_conversation_action)
+        file_menu.addSeparator()
+        exit_action = QAction("E&xit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Settings menu
+        settings_menu = menubar.addMenu("&Settings")
+        settings_action = QAction("&Preferences...", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._open_settings)
+        settings_menu.addAction(settings_action)
+
+        # View menu
+        view_menu = menubar.addMenu("&View")
+        toggle_sidebar_action = QAction("Toggle &Sidebar", self)
+        toggle_sidebar_action.setShortcut("Ctrl+1")
+        toggle_sidebar_action.triggered.connect(self.toggle_conversation_sidebar)
+        view_menu.addAction(toggle_sidebar_action)
+        toggle_assistant_action = QAction("Toggle &Assistant Panel", self)
+        toggle_assistant_action.setShortcut("Ctrl+2")
+        toggle_assistant_action.triggered.connect(self.toggle_assistant_panel)
+        view_menu.addAction(toggle_assistant_action)
+        view_menu.addSeparator()
+        eval_dashboard_action = QAction("&Evaluation Dashboard", self)
+        eval_dashboard_action.setShortcut("Ctrl+E")
+        eval_dashboard_action.triggered.connect(self.show_evaluation_dashboard)
+        view_menu.addAction(eval_dashboard_action)
+
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+        about_action = QAction("&About Kate", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+        self.logger.info("Menu bar created with File, Settings, View, and Help menus")
         
     def _setup_layout(self) -> None:
         """Set up the 3-column layout."""
         self.logger.info("Setting up 3-column layout...")
-        
-        # Create main splitter for 3 columns
-        self.main_splitter = QSplitter(Qt.Horizontal)
+        # Create splitter
+        try:
+            self.main_splitter = QSplitter(Qt.Horizontal)  # type: ignore[attr-defined]
+        except Exception:
+            self.main_splitter = QSplitter()
         self.main_splitter.setChildrenCollapsible(False)
-        self.logger.info("Main horizontal splitter created")
-        
-        # Left panel - Conversation sidebar
-        self.logger.info("Creating conversation sidebar...")
+        # Left panel
         self.conversation_sidebar = ConversationSidebar(self.event_bus)
-        self.conversation_sidebar.setMinimumWidth(250)
-        self.conversation_sidebar.setMaximumWidth(400)
-        self.logger.info("Conversation sidebar created with width constraints")
-        
-        # Center panel - Chat area
-        self.logger.info("Creating chat area...")
+        self.conversation_sidebar.setMinimumWidth(220)
+        self.conversation_sidebar.setMaximumWidth(420)
+        # Center panel
         self.chat_area = ChatArea(self.event_bus)
-        self.logger.info("Chat area created successfully")
-        
-        # Right panel - Assistant panel
-        self.logger.info("Creating assistant panel...")
-        self.assistant_panel = AssistantPanel(self.event_bus)
-        self.assistant_panel.setMinimumWidth(280)
-        self.assistant_panel.setMaximumWidth(350)
-        self.logger.info("Assistant panel created with width constraints")
-        
-        # Add panels to splitter
+        # Right panel
+        shared_assistant_service = getattr(self.app, 'assistant_service', None)
+        self.assistant_panel = AssistantPanel(self.event_bus, assistant_service=shared_assistant_service)
+        self.assistant_panel.setMinimumWidth(300)
+        try:
+            self.assistant_panel.setMaximumWidth(16777215)
+        except Exception:
+            pass
+        # Assemble splitter
         self.main_splitter.addWidget(self.conversation_sidebar)
         self.main_splitter.addWidget(self.chat_area)
         self.main_splitter.addWidget(self.assistant_panel)
-        self.logger.info("All three panels added to splitter")
-        
-        # Set splitter proportions (25% | 50% | 25%)
-        self.main_splitter.setSizes([300, 700, 300])
-        self.logger.info("Splitter proportions set to 300:700:300")
-        
-        # Add splitter to main layout
+        try:
+            self.main_splitter.setStretchFactor(0, 0)
+            self.main_splitter.setStretchFactor(1, 1)
+            self.main_splitter.setStretchFactor(2, 0)
+        except Exception:
+            pass
+        self._initial_sizes_applied = False
         self.main_layout.addWidget(self.main_splitter)
-        self.logger.info("Splitter added to main layout")
-        
-        # Create status bar
+        # Status bar
         self.status_bar = StatusBar()
         self.setStatusBar(self.status_bar)
-        self.logger.info("Status bar created and set")
+        self.logger.info("3-column layout ready")
+
+    def showEvent(self, event):  # type: ignore[override]
+        """On first show, apply proportional splitter sizes (approx 22/56/22)."""
+        super().showEvent(event)
+        if not getattr(self, "_initial_sizes_applied", False):
+            try:
+                total = max(self.width(), 1)
+                left = max(self.conversation_sidebar.minimumWidth(), min(int(total * 0.22), 420))
+                right = max(self.assistant_panel.minimumWidth(), min(int(total * 0.22), 520))
+                center = max(400, total - (left + right))
+                self.main_splitter.setSizes([left, center, right])
+                self.logger.info(f"Applied initial splitter sizes left={left} center={center} right={right}")
+            except Exception as e:
+                self.logger.debug(f"Failed to apply initial dynamic splitter sizes: {e}")
+            self._initial_sizes_applied = True
         
     def _connect_signals(self) -> None:
         """Connect UI signals."""
@@ -154,6 +227,9 @@ class MainWindow(QMainWindow):
         # Connect assistant panel signals
         self.assistant_panel.assistant_changed.connect(
             self._handle_assistant_changed
+        )
+        self.assistant_panel.model_settings_changed.connect(
+            self._handle_model_settings_changed
         )
         self.assistant_panel.evaluation_details_requested.connect(
             self._handle_evaluation_details_request
@@ -181,7 +257,45 @@ class MainWindow(QMainWindow):
     def _handle_assistant_changed(self, assistant_id: str) -> None:
         """Handle assistant selection change."""
         self.logger.debug(f"Assistant changed to: {assistant_id}")
-        # Assistant change handling will be implemented
+        # Provide assistant metadata to chat area for system prompt adaptation
+        if hasattr(self.assistant_panel, 'assistants') and assistant_id in self.assistant_panel.assistants:
+            data = self.assistant_panel.assistants[assistant_id]
+            if hasattr(self.chat_area, 'set_assistant'):
+                self.chat_area.set_assistant(assistant_id, data)
+            # Attempt to switch model if assistant specifies an ollama model
+            try:
+                desired_model = data.get('model')
+                provider_name = data.get('provider')
+                if provider_name == 'ollama' and desired_model:
+                    class _HasModels(Protocol):  # local Protocol to satisfy mypy
+                        available_models: List[Any]
+                        selected_model: str
+
+                    app_with_models = cast(Optional[_HasModels], self.app if hasattr(self.app, 'available_models') else None)
+                    if app_with_models and getattr(app_with_models, 'available_models', None):
+                        for m in app_with_models.available_models:  # type: ignore[attr-defined]
+                            mid = getattr(m, 'id', None)
+                            if isinstance(mid, str) and isinstance(desired_model, str) and mid.startswith(desired_model):
+                                try:
+                                    app_with_models.selected_model = mid  # type: ignore[attr-defined]
+                                except Exception:
+                                    pass
+                                status_bar = getattr(getattr(self.app, 'main_window', None), 'status_bar', None)
+                                if status_bar and hasattr(status_bar, 'set_provider_info'):
+                                    try:
+                                        status_bar.set_provider_info('Ollama', mid)
+                                    except Exception:
+                                        pass
+                                self.logger.info(f"Switched model due to assistant selection: {mid}")
+                                break
+            except Exception as e:
+                self.logger.debug(f"Model switch on assistant change skipped: {e}")
+
+    def _handle_model_settings_changed(self, settings: Dict[str, Any]) -> None:
+        """Propagate model parameter changes to chat area."""
+        if hasattr(self.chat_area, 'set_model_settings'):
+            self.chat_area.set_model_settings(settings)
+        self.logger.debug("Model settings updated from assistant panel")
         
     def _handle_evaluation_received(self, evaluation_data) -> None:
         """Handle evaluation data received from chat area."""
@@ -189,11 +303,11 @@ class MainWindow(QMainWindow):
             # Update assistant panel with evaluation metrics
             if hasattr(evaluation_data, 'to_dict'):
                 # ResponseEvaluation object
-                eval_dict = evaluation_data.to_dict()
                 self.assistant_panel.update_evaluation(evaluation_data)
             else:
                 # Already a dictionary
-                eval_dict = evaluation_data
+                # For dict-based stub evaluations, we currently skip assistant_panel.update_evaluation
+                pass
                 
             # Update evaluation dashboard if available
             if self.evaluation_dashboard and hasattr(evaluation_data, 'to_dict'):
@@ -211,9 +325,13 @@ class MainWindow(QMainWindow):
                 self._create_evaluation_dashboard()
                 
             # Show the evaluation dashboard
-            self.evaluation_dashboard.show()
-            self.evaluation_dashboard.raise_()
-            self.evaluation_dashboard.activateWindow()
+            dash = self.evaluation_dashboard
+            if dash:
+                dash.show()
+                if hasattr(dash, 'raise_'):
+                    dash.raise_()
+                if hasattr(dash, 'activateWindow'):
+                    dash.activateWindow()
             
             self.logger.info("Evaluation dashboard opened")
             
@@ -229,9 +347,9 @@ class MainWindow(QMainWindow):
             
             # Create a minimal embedding service for evaluation
             # In a full implementation, this would be injected from the application
-            embedding_service = EmbeddingService(
-                database_manager=None,  # Will be provided later
-                event_bus=self.event_bus
+            embedding_service = EmbeddingService(  # type: ignore[arg-type]
+                database_manager=None,  # TODO: inject real DatabaseManager
+                event_bus=self.event_bus,
             )
             
             # Create evaluation service
@@ -420,3 +538,64 @@ class MainWindow(QMainWindow):
         self.repaint()
         self.update()
         self.logger.info("Forced window repaint and update")
+        
+    def _open_settings(self) -> None:
+        """Open the settings window."""
+        try:
+            if not self.settings_window:
+                self.settings_window = SettingsWindow(self)
+                self.settings_window.settings_changed.connect(self._handle_settings_changed)
+                
+            self.settings_window.show()
+            self.settings_window.raise_()
+            self.settings_window.activateWindow()
+            
+            self.logger.info("Settings window opened")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to open settings window: {e}")
+            
+    def _handle_settings_changed(self, settings: Dict[str, Any]) -> None:
+        """Handle settings changes from the settings window."""
+        try:
+            self.logger.info("Settings changed, applying updates...")
+            
+            # Apply voice settings
+            voice_settings = settings.get('voice', {})
+            if voice_settings and hasattr(self.assistant_panel, 'apply_voice_settings'):
+                self.assistant_panel.apply_voice_settings(voice_settings)
+                
+            # Apply agent settings
+            agent_settings = settings.get('agent', {})
+            if agent_settings:
+                active_agent = agent_settings.get('active_agent')
+                if active_agent and hasattr(self.assistant_panel, 'set_active_agent'):
+                    self.assistant_panel.set_active_agent(active_agent)
+                    
+            # Apply app settings
+            app_settings = settings.get('app', {})
+            if app_settings:
+                theme = app_settings.get('theme')
+                if theme and hasattr(self.app, 'theme_manager'):
+                    # Apply theme changes
+                    pass
+                    
+            self.update_status("Settings applied successfully")
+            self.logger.info("Settings changes applied to application")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply settings: {e}")
+            self.update_status("Failed to apply settings")
+            
+    def _show_about(self) -> None:
+        """Show about dialog."""
+        from PySide6.QtWidgets import QMessageBox
+        
+        about_text = """
+        <h2>Kate LLM Desktop Client</h2>
+        <p>Version 1.0.0</p>
+        <p>A modern desktop client for multiple LLM providers.</p>
+        <p>Built with Python and PySide6.</p>
+        """
+        
+        QMessageBox.about(self, "About Kate", about_text)

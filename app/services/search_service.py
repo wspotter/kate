@@ -26,11 +26,13 @@ from ..database.models import (
     DocumentChunk,
     Message,
 )
-from .retrieval_service import RetrievalMode, RetrievalQuery, RetrievalService
 from .vector_store import VectorStore
 
-# Lazy import to avoid hanging during startup
+# Lazy imports to avoid hanging during startup
 _EmbeddingService = None
+_RetrievalService = None
+_RetrievalMode = None
+_RetrievalQuery = None
 
 def _get_embedding_service():
     global _EmbeddingService
@@ -38,6 +40,15 @@ def _get_embedding_service():
         from .embedding_service import EmbeddingService
         _EmbeddingService = EmbeddingService
     return _EmbeddingService
+
+def _get_retrieval_classes():
+    global _RetrievalService, _RetrievalMode, _RetrievalQuery
+    if _RetrievalService is None:
+        from .retrieval_service import RetrievalMode, RetrievalQuery, RetrievalService
+        _RetrievalService = RetrievalService
+        _RetrievalMode = RetrievalMode
+        _RetrievalQuery = RetrievalQuery
+    return _RetrievalService, _RetrievalMode, _RetrievalQuery
 
 
 class SearchMode(Enum):
@@ -126,7 +137,7 @@ class SearchService:
         database_manager: DatabaseManager,
         event_bus: EventBus,
         embedding_service = None,
-        retrieval_service: Optional[RetrievalService] = None,
+        retrieval_service = None,
         vector_store: Optional[VectorStore] = None
     ):
         self.database_manager = database_manager

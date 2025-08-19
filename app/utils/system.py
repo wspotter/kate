@@ -2,13 +2,24 @@
 System information utilities for Kate LLM Client.
 """
 
-import sys
 import platform
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
 import platformdirs
-from PySide6.QtCore import QT_VERSION_STR
 from PySide6 import __version__ as pyside_version
+
+# Try to get Qt version, fallback if not available
+try:
+    from PySide6.QtCore import QT_VERSION_STR
+    qt_version = QT_VERSION_STR
+except ImportError:
+    try:
+        from PySide6.QtCore import qVersion
+        qt_version = qVersion()
+    except ImportError:
+        qt_version = "Unknown"
 
 
 def get_system_info() -> Dict[str, Any]:
@@ -22,7 +33,7 @@ def get_system_info() -> Dict[str, Any]:
         "version": "1.0.0",
         "platform": f"{platform.system()} {platform.release()}",
         "python_version": platform.python_version(),
-        "qt_version": QT_VERSION_STR,
+        "qt_version": qt_version,
         "pyside_version": pyside_version,
         "config_dir": str(Path(platformdirs.user_config_dir("Kate"))),
         "data_dir": str(Path(platformdirs.user_data_dir("Kate"))),

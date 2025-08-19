@@ -18,9 +18,23 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextCharFormat,
 )
-from PySide6.QtMultimedia import QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtSvgWidgets import QSvgWidget
+
+# Optional multimedia imports - fallback gracefully if not available
+try:
+    from PySide6.QtMultimedia import QMediaPlayer
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+    MULTIMEDIA_AVAILABLE = True
+except ImportError:
+    QMediaPlayer = None
+    QVideoWidget = None
+    MULTIMEDIA_AVAILABLE = False
+
+try:
+    from PySide6.QtSvgWidgets import QSvgWidget
+    SVG_AVAILABLE = True
+except ImportError:
+    QSvgWidget = None
+    SVG_AVAILABLE = False
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -255,12 +269,12 @@ class MessageBubble(QFrame):
         copy_button.setToolTip("Copy message")
         copy_button.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
+                background-color: #404040;
                 border: none;
                 font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #404040;
+                background-color: #555555;
                 border-radius: 4px;
             }
         """)
@@ -273,12 +287,12 @@ class MessageBubble(QFrame):
             eval_button.setToolTip("View evaluation details")
             eval_button.setStyleSheet("""
                 QPushButton {
-                    background-color: transparent;
+                    background-color: #404040;
                     border: none;
                     font-size: 12px;
                 }
                 QPushButton:hover {
-                    background-color: #404040;
+                    background-color: #555555;
                     border-radius: 4px;
                 }
             """)
@@ -310,7 +324,7 @@ class MessageBubble(QFrame):
         """Apply general styling to the message bubble."""
         self.setStyleSheet("""
             MessageBubble {
-                background-color: transparent;
+                background-color: #1e1e1e;
                 border: none;
             }
         """)
@@ -449,12 +463,12 @@ class StreamingMessageBubble(MessageBubble):
         self.copy_button.setToolTip("Copy message")
         self.copy_button.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
+                background-color: #404040;
                 border: none;
                 font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #404040;
+                background-color: #555555;
                 border-radius: 4px;
             }
         """)
@@ -467,12 +481,12 @@ class StreamingMessageBubble(MessageBubble):
         self.eval_button.setToolTip("View evaluation details")
         self.eval_button.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
+                background-color: #404040;
                 border: none;
                 font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #404040;
+                background-color: #555555;
                 border-radius: 4px;
             }
         """)
@@ -529,6 +543,8 @@ class StreamingMessageBubble(MessageBubble):
         # Update final content
         if self.content_label:
             self.content_label.setText(self.content)
+        else:
+            logger.warning("StreamingMessageBubble.finish_streaming called before content_label initialized")
             
         # Hide streaming indicator and show actions
         if hasattr(self, 'streaming_indicator'):
@@ -545,16 +561,17 @@ class StreamingMessageBubble(MessageBubble):
             self.pending_evaluation = None
             
         # Update styling to remove streaming border
-        parent_frame = self.content_label.parent()
-        if parent_frame:
-            self.evaluation_indicator.setVisible(True)
-            parent_frame.setStyleSheet("""
-                QFrame {
-                    background-color: #404040;
-                    border-radius: 16px;
-                    border-bottom-left-radius: 4px;
-                }
-            """)
+        if self.content_label:
+            parent_frame = self.content_label.parent()
+            if parent_frame:
+                self.evaluation_indicator.setVisible(True)
+                parent_frame.setStyleSheet("""
+                    QFrame {
+                        background-color: #404040;
+                        border-radius: 16px;
+                        border-bottom-left-radius: 4px;
+                    }
+                """)
             
     def set_pending_evaluation(self, evaluation_data: Dict[str, Any]) -> None:
         """Set evaluation data to be shown after streaming completes."""

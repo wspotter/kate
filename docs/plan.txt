@@ -1,0 +1,293 @@
+
+1. High-Level System Map
+Layers (outer → inner):
+
+UI Layer (PySide6 widgets)
+Application Layer (KateApplication lifecycle, event bus)
+Service Layer (RAG, embeddings, retrieval, search, update manager, vector store)
+Provider Layer (Ollama + future providers)
+Persistence Layer (database manager, models)
+Utilities (logging, platform/system helpers)
+Configuration (settings, external assistants.json, themes)
+Primary cross‑cutting concerns:
+
+EventBus dispatch (loose coupling of UI and services)
+Logging (loguru)
+Async orchestration (asyncio + qasync/Qt loop)
+Evaluation telemetry (RAG evaluation service)
+2. Module Responsibility Map
+UI
+
+main_window.py: Composition root for UI; wires chat area, assistant panel, conversation sidebar, status bar.
+conversation_sidebar: Conversation management (selection, creation placeholders).
+chat_area: Message flow, RAG integration, provider chat, evaluation signal emission.
+assistant_panel: Assistant selection, model settings controls, evaluation metrics display.
+message_bubble: Rendering of user/assistant messages; streaming bubble support.
+status_bar: Provider connection + model + generic status.
+Theme manager (in themes/): Styles and dynamic stylesheet generation.
+Core
+
+application.py: Startup sequence, timers (auto-save?, provider health), provider initialization, graceful shutdown.
+config.py: AppSettings, read/write future persistence.
+events.py: Defines event types & EventBus.
+Providers
+
+base.py: Abstract provider contracts, request/response models.
+vllm_provider.py / (future): Adapters for remote/local LLM backends.
+ollama_provider.py: Concrete local model interactions (connect, model list, chat, streaming support).
+Services
+
+rag_service.py: Orchestrates RAG pipeline (intended).
+retrieval_service.py: Vector search abstraction.
+embedding_service.py: Embedding generation (ties to DB & vector store).
+document_processor.py: Ingestion pipeline (chunking, metadata).
+vector_store.py: Vector persistence (in-memory or DB-backed).
+conversation_embedding_service.py: Conversation-level semantic operations.
+rag_integration_service.py: High-level chat + retrieval composition.
+rag_evaluation_service.py: Produces evaluation metrics (relevance, coherence, etc.).
+search_service.py: Plain text / metadata search (non-vector).
+update_manager.py: Background updates (models/data?).
+Database
+
+manager.py: Connection/session management.
+models.py: ORM or schema definitions (TBD detail).
+Utilities
+
+logging.py: Logger configuration bootstrap.
+platform.py / system.py: OS checks, system capability helpers.
+Config & Data
+
+assistants.json: External agent templates (system_prompt, model, provider).
+pyproject.toml: Dependency + build configuration.
+Theme definitions (maybe JSON/py in themes).
+3. Data & Control Flows
+Chat (non-RAG): User message → chat_area.add_message() → create conversation (if needed) → _ollama_chat() builds ChatCompletionRequest → provider → response → message bubble + stub evaluation → emitted evaluation_received → assistant_panel.update_evaluation(). Status bar passively shows provider state.
+
+Chat (RAG pipeline intended): User message → RAG worker thread (RAGWorker) → asynchronous retrieval + generation streaming → streaming chunks to bubble → final response + retrieved context → evaluation service (future: triggered inside RAG integration) → evaluation metrics emitted.
+
+Assistant Selection: Assistant panel loads external config → user selects → signal to main window → main window calls chat_area.set_assistant() (system prompt + temp heuristic) and optionally changes selected_model if available.
+
+Provider Initialization: On app startup → _initialize_ollama_provider() connects → lists models → chooses default (prefix match) → sets status bar and periodic health timer → optional test completion.
+
+Evaluation Metrics: Full evaluation pipeline partially stubbed; RAG evaluation service only fully meaningful when retrieval context is populated.
+
+4. Current Gaps / Risks
+Type-check false positives: PySide types unresolved (mypy config or missing stubs).
+Assistant panel model switch fragile: depends on available_models population order and prefix logic.
+Chat history not preserved in request (only last turn).
+Streaming path disabled/fallback; streaming bubble code may rot.
+Evaluation stubs for non-RAG responses use fixed 0.5 scores (misleading).
+RAG worker uses its own event loop per message (costly; potential leaks if errors).
+Error handling surfaces generic errors to user without remediation hints.
+Config path logic fragile (manually assembled relative paths).
+Missing persistence for conversations, settings, window state.
+No automated tests (unit/integration/UI smoke).
+No structured telemetry (latency distributions, error taxonomy).
+Lint errors after recent patches (should be resolved before merging).
+Graceful shutdown of threads/timers may not await in-flight tasks.
+Vector store persistence unspecified (risk of data loss).
+Security: No sandboxing, no model prompt filtering.
+5. Prioritized Roadmap (90-Day)
+Phase 1 (Stabilize – Week 1–2)
+
+Fix lint/type errors; configure mypy to ignore PySide or install PySide6-stubs.
+Add conversation history accumulation in ChatArea (truncate with token budgeting).
+Extract system prompts cleanly; show current assistant + model in header.
+Implement structured error dialog component.
+Replace stub evaluation for non-RAG with: hide metrics or simple latency + token usage.
+Phase 2 (RAG Maturity – Week 3–4)
+
+Implement document ingestion pipeline end-to-end (processor → embeddings → vector store).
+Add retrieval scoring + ranking metrics; attach to ResponseEvaluation.
+Persist conversation + retrieved context snapshots.
+Phase 3 (Observability & QA – Week 5–6)
+
+Add logging context (conversation_id, assistant_id) via loguru bind.
+Introduce central metrics aggregator (latency, failure counts).
+Begin pytest suite: providers (mock HTTP), retrieval (fixture corpus), evaluation scoring.
+Phase 4 (UX & Streaming – Week 7–8)
+
+Reintroduce stable streaming with backpressure + incremental evaluation (optional).
+Assistant panel: allow editing + saving new assistants (UI form → JSON write).
+Add quick model switch dropdown in status bar.
+Phase 5 (DevOps & Packaging – Week 9–10)
+
+CI pipeline: lint, type, test matrix (Python versions), build PyInstaller artifact.
+Automated release tagging + changelog generation.
+Crash reporting hook (optional self-hosted Sentry-like).
+Phase 6 (Refinement – Week 11–12)
+
+Plugin architecture for providers (entry points or dynamic discovery).
+Configurable vector store backend (SQLite/FAISS).
+Performance profiling + caching (embedding memoization).
+6. DevOps Pipeline Design
+Stages:
+
+Pre-commit: ruff (lint), black (format), mypy (soft fail initially), minimal pytest subset (fast).
+CI:
+Install dependencies (poetry install --with dev).
+Run static checks (ruff, mypy).
+Run tests with coverage.
+Build artifact (PyInstaller) on Linux/Mac/Win runners.
+Upload build + coverage report artifact.
+Release job (tag trigger):
+Semantic version bump (commit messages conventional).
+Generate changelog.
+Publish GitHub Release with artifacts.
+Nightly job:
+RAG regression tests (retrieval quality), latency benchmarks recorded to artifact.
+Infrastructure:
+
+GitHub Actions YAML (multi-job matrix).
+Cache poetry virtualenv + .mypy_cache + .ruff_cache.
+Optional Docker image containing runtime environment for reproducibility.
+7. Testing Strategy
+Test Layers:
+
+Unit: provider adapters (mock network), embedding service (fake vectors), vector store CRUD, assistant loading fallback.
+Integration: end-to-end chat (simulate user message → provider mock → UI callback).
+RAG: retrieval quality (precision@k), latency budgets.
+UI smoke: Qt headless (QT_QPA_PLATFORM=offscreen) basic widget creation & signal tests.
+Key Initial Test Cases:
+
+Assistant JSON load (valid, invalid, missing).
+Model selection fallback when preferred model missing.
+Provider health check timer toggling status bar.
+Chat message accumulation & token budgeting (boundary conditions).
+RAG retrieval returns correct top-k ordering.
+8. Logging & Observability
+Logging Structure:
+
+Logger bind keys: session_id, conversation_id, assistant_id, component.
+Levels:
+INFO: lifecycle, assistant changes, provider connect/disconnect.
+DEBUG: prompt contents (redact user-sensitive in future).
+WARNING: degraded features (fallback to stub eval).
+ERROR: exceptions with stack trace.
+Add:
+
+Rolling log file (size/time rotation).
+Structured JSON log option for CI or telemetry ingestion.
+Metrics (future):
+
+Response latency histogram.
+Token usage per response.
+Retrieval time vs generation time ratio.
+Error rate (provider vs internal).
+9. Debugging Playbooks
+Startup Failure
+
+Check logs for IndentationError / import errors.
+Run lint/type tasks; ensure PySide installed in environment.
+Verify path to assistants.json (log path at load).
+Provider “Disconnected”
+
+Curl Ollama endpoint /api/tags.
+Log provider status transitions.
+Run health check manually (invoke application method in REPL).
+No Assistant Models Listed
+
+Dump available_models after connect.
+Validate normalization logic (prefix matching).
+Add verbose log for every model ID.
+Chat Not Responding
+
+Confirm request building: log ChatCompletionRequest fields (masked system prompt length).
+Replace provider call with mock returning deterministic content to isolate UI delays.
+Evaluation Metrics Missing
+
+Confirm whether RAG path engaged (rag_integration_service is not None).
+If non-RAG, ensure metrics section hides or displays “N/A” state.
+Streaming Breakage
+
+Enable debug logs for every received chunk.
+Guard concurrency: only one active streaming bubble; assert state before starting.
+Thread Leaks (RAG Worker)
+
+Track thread count before/after messages.
+Ensure worker thread quits on app shutdown; add atexit handler check.
+UI Freeze
+
+Check for blocking I/O on main thread (e.g., synchronous DB calls).
+Move heavy ops to worker thread / async tasks.
+10. Configuration & Secrets
+Current:
+
+Local models only (no secrets). Future (remote APIs):
+Add .env file loading (python-dotenv).
+Central config accessor returning redacted logs for secret printing.
+Validation phase on startup; surface missing keys early.
+11. Performance Considerations
+Immediate:
+
+Avoid creating new event loop per RAG worker invocation (reuse thread-bound loop or schedule coroutine via asyncio.run_coroutine_threadsafe).
+Batch embedding operations.
+Cache assistant system prompts (already trivial). Future:
+Token length budgeting: prune oldest turns when near context limit.
+Use incremental vector index updates vs full rebuild on new documents.
+12. Refactoring Targets
+Short-Term:
+
+Extract path resolution helper (for config, themes).
+Centralize assistant management (separate assistant_service.py).
+Encapsulate conversation state (history, metadata) in a Conversation model.
+Mid-Term:
+
+Introduce dependency injection container (lightweight) for providers/services.
+Replace ad-hoc evaluation stub injection with strategy objects.
+Long-Term:
+
+Event sourcing of conversations (append-only log, replayable).
+Plugin system for tool calling (function registry).
+13. Risk Register (Condensed)
+Risk	Impact	Mitigation
+Streaming reintroduction regression	High UX break	Canary flag + fallback toggle
+Model mismatch naming	Medium confusion	Normalize + display canonical ID
+Thread loop misuse	Memory/thread leak	Shared loop + test harness
+Silent JSON config failure	Poor UX	Mandatory load log + UI banner on fallback
+Type noise (PySide)	Hides real errors	Stub install + mypy ignore patterns
+RAG latency spikes	Perceived slowness	Parallelize retrieval + prewarm embeddings
+14. Immediate Action Checklist (Tactical)
+Confirm assistants now load (log assistant count).
+Add logging of config_path when loading assistants.
+Hide evaluation metrics when scores are stubbed.
+Add conversation history retention (list of ChatMessages).
+Write first 5 unit tests (assistant load, provider health, chat request, fallback assistant, evaluation stub hide).
+Add GitHub Actions workflow skeleton.
+15. Sample Next-Step Issues (Ready-to-Create)
+feat: conversation history & token budgeting
+fix: reuse single event loop in RAG worker
+chore: add PySide6 stubs + mypy config adjustments
+feat: evaluation metrics hide for non-RAG
+infra: add CI pipeline (lint/type/test/build)
+docs: CONTRIBUTING.md + debug playbook
+16. Minimal Mypy / Ruff Config Suggestion
+mypy.ini [tool.mypy] ignore_missing_imports = True plugins = [] strict_optional = True warn_redundant_casts = True warn_unused_ignores = True exclude = (?x)(^build/)
+
+ruff Enable: F, E, W, B, I, UP Per-file ignores for generated UI if needed.
+
+17. Success Criteria Definition
+MVP “Stable” when:
+
+Assistants load from external file; selection updates system prompt & model.
+Chat handles multi-turn context with pruning.
+Provider health visible and accurate for 24h run.
+80% provider & service code under unit tests.
+RAG pipeline returns evaluation metrics > stub for at least one sample doc set.
+CI green on lint, type (non-fatal allowed warnings threshold), tests.
+18. Extension Hooks
+Future functions:
+
+Tool invocation (e.g., code execution sandbox).
+Document citation inline (sources footnote).
+Export conversation (Markdown/JSON).
+19. Deployment / Distribution
+Primary: PyInstaller single-file or directory bundle.
+Secondary: Optional Docker container (for server mode later).
+Version tagging: semantic (MAJOR.MINOR.PATCH).
+20. Maintaining Momentum
+Cadence:
+
+Weekly triage of error logs.
+Bi-weekly performance snapshot (average response latency).
+Monthly dependency update review (poetry update --dry-run).
